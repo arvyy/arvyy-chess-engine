@@ -1,7 +1,8 @@
-{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 module ChessEngine.PositionEval(
     PositionEval,
-    evaluate
+    evaluate,
+    EvaluateResult(..)
 )
 where
 
@@ -9,7 +10,7 @@ import ChessEngine.Board
 import Data.List (sortBy)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
-import Debug.Trace
+import Control.Monad.Trans.Cont
 
 type BoardCache = Map.Map ChessBoard (PositionEval, [Move])
 
@@ -59,44 +60,82 @@ outOfMovesEval board =
        then BlackWin
        else WhiteWin
 
-evaluate' :: BoardCache -> [Move] -> [Move] -> PositionEval -> PositionEval -> Int -> ChessBoard -> ((PositionEval, [Move]), BoardCache)
-evaluate' cache moves firstChoice alpha beta depth board
-    | Just cachedValue <- Map.lookup board cache = (cachedValue, cache)
+data EvaluateParams = EvaluateParams
+    { cache :: !BoardCache
+    , moves :: ![Move]
+    , firstChoice :: ![Move]
+    , alpha :: !PositionEval
+    , beta :: !PositionEval
+    , depth :: !Int
+    , board :: !ChessBoard
+    , nodesParsed :: !Int
+    , currentBest :: !(PositionEval, [Move])
+    }
+
+data EvaluateResult = EvaluateResult
+    { nodesParsed :: !Int
+    , finished :: !Bool
+    , evaluation :: !PositionEval
+    , moves :: ![Move]
+    , continuation :: EvaluateResult
+    }
+
+evaluate' :: EvaluateParams -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
+evaluate' params = do
+    if depth `mod` 4 == 0 then shift $ \k -> return EvaluateResult
+                                                      { nodesParsed = nodesParsed
+                                                      , finished = False
+                                                      , evaluation = (fst currentBest)
+                                                      , moves = (snd currentBest)
+                                                      , continuation = (k ())
+                                                      } 
+                          else return ()
+    resumeEvaluate' params
+
+    where EvaluateParams { depth = depth, nodesParsed = nodesParsed, cache = cache, currentBest = currentBest } = params
+
+
+-- TODO store cache hits; periodically clean up entries without hits
+resumeEvaluate' :: EvaluateParams -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
+resumeEvaluate' params
+    | Just cachedValue <- Map.lookup board cache = return (cachedValue, cache, nodesParsed + 1)
     | (null candidates) =
         let eval = (outOfMovesEval board, moves)
-        in (eval, Map.insert board eval cache)
+        in return (eval, Map.insert board eval cache, nodesParsed + 1)
     | depth == 0 = 
         let eval = (finalDepthEval board, moves)
-        in (eval, Map.insert board eval cache)
+        in return (eval, Map.insert board eval cache, nodesParsed + 1)
     | otherwise = foldCandidates cache candidates alpha beta
-    where foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache)
+    where EvaluateParams { cache = cache, moves = moves, firstChoice = firstChoice, alpha = alpha, beta = beta, depth = depth, board = board, nodesParsed = nodesParsed } = params
+
+          foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
           foldCandidates cache candidates alpha beta = if (turn board) == White
-                                                       then foldCandidatesWhite cache True (BlackWin, []) candidates alpha beta
-                                                       else foldCandidatesBlack cache True (WhiteWin, []) candidates alpha beta
+                                                       then foldCandidatesWhite nodesParsed cache True (BlackWin, []) candidates alpha beta
+                                                       else foldCandidatesBlack nodesParsed cache True (WhiteWin, []) candidates alpha beta
 
-          foldCandidatesWhite :: BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache)
-          foldCandidatesWhite cache first bestMoveValue ((candidateMove, candidateBoard):restCandidates) alpha beta = 
+          foldCandidatesWhite :: Int -> BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
+          foldCandidatesWhite nodesParsed cache first bestMoveValue ((candidateMove, candidateBoard):restCandidates) alpha beta = 
             if alpha >= beta
-            then (bestMoveValue, Map.insert board bestMoveValue cache)
-            else let newMovesPath = moves ++ [candidateMove]
-                     (moveValue, newCache) = evaluate' cache newMovesPath (followUpFirstChoice candidateMove) alpha beta (depth - 1) candidateBoard
-                     newBestMoveValue = if (first || compare (fst bestMoveValue) (fst moveValue) == LT)
-                                        then moveValue
-                                        else bestMoveValue
-                 in foldCandidatesWhite newCache False newBestMoveValue restCandidates (fst newBestMoveValue) beta
-          foldCandidatesWhite cache _ bestMoveValue [] _ _ =  (bestMoveValue, Map.insert board bestMoveValue cache)
+            then return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
+            else do let newMovesPath = moves ++ [candidateMove]
+                    (moveValue, newCache, newNodesParsed) <- evaluate' params { moves = newMovesPath, firstChoice = (followUpFirstChoice candidateMove), depth = (depth - 1), board =  candidateBoard, nodesParsed = nodesParsed }
+                    let newBestMoveValue = if (first || compare (fst bestMoveValue) (fst moveValue) == LT)
+                                           then moveValue
+                                           else bestMoveValue
+                    foldCandidatesWhite newNodesParsed newCache False newBestMoveValue restCandidates (fst newBestMoveValue) beta
+          foldCandidatesWhite nodesParsed cache _ bestMoveValue [] _ _ = return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
 
-          foldCandidatesBlack :: BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache)
-          foldCandidatesBlack cache first bestMoveValue ((candidateMove, candidateBoard):restCandidates) alpha beta = 
+          foldCandidatesBlack :: Int -> BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
+          foldCandidatesBlack nodesParsed cache first bestMoveValue ((candidateMove, candidateBoard):restCandidates) alpha beta = 
             if alpha >= beta
-            then (bestMoveValue, Map.insert board bestMoveValue cache)
-            else let newMovesPath = moves ++ [candidateMove]
-                     (moveValue, newCache) = evaluate' cache newMovesPath (followUpFirstChoice candidateMove) alpha beta (depth - 1) candidateBoard
-                     newBestMoveValue = if (first || compare (fst bestMoveValue) (fst moveValue) == GT)
-                                        then moveValue
-                                        else bestMoveValue
-                 in foldCandidatesBlack newCache False newBestMoveValue restCandidates alpha (fst newBestMoveValue)
-          foldCandidatesBlack cache _ bestMoveValue [] _ _ =  (bestMoveValue, Map.insert board bestMoveValue cache)
+            then return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
+            else do let newMovesPath = moves ++ [candidateMove]
+                    (moveValue, newCache, newNodesParsed) <- evaluate' params { moves = newMovesPath, firstChoice = (followUpFirstChoice candidateMove), depth = (depth - 1), board =  candidateBoard, nodesParsed = nodesParsed }
+                    let newBestMoveValue = if (first || compare (fst bestMoveValue) (fst moveValue) == GT)
+                                           then moveValue
+                                           else bestMoveValue
+                    foldCandidatesBlack newNodesParsed newCache False newBestMoveValue restCandidates alpha (fst newBestMoveValue)
+          foldCandidatesBlack nodesParsed cache _ bestMoveValue [] _ _ =  return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
 
           candidates = let candidatesList = candidateMoves board
                            newCandidatesList = case firstChoice of
@@ -112,19 +151,39 @@ evaluate' cache moves firstChoice alpha beta depth board
                 [] -> []
                 (m:rest) -> if m == move then rest else []
 
-evaluateIteration :: ChessBoard -> [Move] -> Int -> (PositionEval, [Move])
-evaluateIteration board firstChoice depth =
-    let (eval, cache) = evaluate' Map.empty [] firstChoice BlackWin WhiteWin depth board
-    in eval
+evaluateIteration :: ChessBoard -> (PositionEval, [Move]) -> Int -> Cont EvaluateResult ((PositionEval, [Move]), Int)
+evaluateIteration board lastDepthBest depth = do
+    let (lastEval, firstChoice) = lastDepthBest
+    let params = EvaluateParams 
+                    { cache = Map.empty
+                    , moves = []
+                    , firstChoice = firstChoice
+                    , alpha = BlackWin
+                    , beta = WhiteWin
+                    , depth = depth
+                    , board = board
+                    , nodesParsed = 0
+                    , currentBest = lastDepthBest
+                    } 
+    (best, cache, nodesParsed) <- evaluate' params
+    return (best, nodesParsed)
             
-evaluate :: ChessBoard -> (Int, PositionEval, [Move])
-evaluate board = 
-    iterate computeNext firstEvaluation !! (finalDepth - startingDepth)
-    where computeNext :: (Int, PositionEval, [Move]) -> (Int, PositionEval, [Move])
-          computeNext (depth, posEval, bestMove) = 
-              let !(nextPosEval, nextBestMove) = trace ("Running iteration for depth " ++ (show (depth + 1))) evaluateIteration board bestMove (depth + 1)
-              in (depth + 1, nextPosEval, nextBestMove)
-          startingDepth = 4
-          finalDepth = 11
-          firstEvaluation :: (Int, PositionEval, [Move])
-          firstEvaluation = computeNext ((startingDepth - 1), Draw, [])
+evaluate :: ChessBoard -> Int -> EvaluateResult
+evaluate board finalDepth = evalCont . reset $ do
+    (_, (eval, moves), nodesParsed) <- iterate computeNext firstEvaluation !! (finalDepth - startingDepth)
+    let result = EvaluateResult
+                    { moves = moves
+                    , nodesParsed = nodesParsed
+                    , finished = True
+                    , evaluation = eval
+                    , continuation = result
+                    }
+    return result
+    where computeNext :: Cont EvaluateResult (Int, (PositionEval, [Move]), Int) -> Cont EvaluateResult (Int, (PositionEval, [Move]), Int)
+          computeNext current = do
+              (depth, lastDepthBest, _) <- current
+              (thisDepthBest, nodesParsed) <- evaluateIteration board lastDepthBest (depth + 1)
+              return (depth + 1, thisDepthBest, nodesParsed)
+          startingDepth = 3
+          firstEvaluation :: Cont EvaluateResult (Int, (PositionEval, [Move]), Int)
+          firstEvaluation = computeNext (return ((startingDepth - 1), (Draw, []), 0))

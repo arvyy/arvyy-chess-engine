@@ -12,6 +12,7 @@ module ChessEngine.Board(
     applyMove,
     playerInCheck,
     parseMove,
+    moveToString,
     loadFen
 ) where
 
@@ -109,7 +110,6 @@ data PlayerColor = Black | White deriving (Eq, Show, Ord)
 data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq)
 data ChessBoard = ChessBoard
     { turn :: !PlayerColor
-    --, pieces :: ![(Int, Int, ChessPiece)]
     , pieces :: !ChessBoardPositions
 
     -- if last move was double pawn move, indicates the file for potential en passant followup
@@ -194,31 +194,6 @@ moveToString (Move fromx fromy tox toy promo) = do
 
 initialBoard :: ChessBoard
 initialBoard = fromJust $ loadFen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-{-
-initialBoard =
-    let whitePawns = map (\ i -> (i, 2, ChessPiece White Pawn)) [1..8]
-        blackPawns = map (\ i -> (i, 7, ChessPiece Black Pawn)) [1..8]
-        normalPiecesPlacer :: Int -> PlayerColor -> [(Int, Int, ChessPiece)]
-        normalPiecesPlacer row player = 
-            [(1, row, ChessPiece player Rock),
-             (2, row, ChessPiece player Horse),
-             (3, row, ChessPiece player Bishop),
-             (4, row, ChessPiece player Queen),
-             (5, row, ChessPiece player King),
-             (6, row, ChessPiece player Bishop),
-             (7, row, ChessPiece player Horse),
-             (8, row, ChessPiece player Rock)]
-        pieces = whitePawns ++ blackPawns ++ (normalPiecesPlacer 1 White) ++ (normalPiecesPlacer 8 Black)
-    in ChessBoard
-        { turn = White
-        , pieces = pieces
-        , enPassant = Nothing
-        , whiteKingCastle = True
-        , blackKingCastle = True
-        , whiteQueenCastle = True
-        , blackQueenCastle = True
-        }
--}
 
 otherPlayer :: PlayerColor -> PlayerColor
 otherPlayer Black = White
