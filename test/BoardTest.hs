@@ -4,8 +4,10 @@ module Main where
 import Test.Tasty
 import Test.Tasty.QuickCheck as QC
 import Test.QuickCheck(allProperties)
+import Test.Tasty.HUnit
 
-import ChessEngine.Board(ChessBoard (..), initialBoard, candidateMoves, Move)
+import ChessEngine.Board
+import ChessEngine.UCI
 
 -- makes random valid move or returns itself if no moves available
 applyRandomMove :: ChessBoard -> Gen ChessBoard
@@ -23,16 +25,25 @@ instance Arbitrary ChessBoard where
         moveCount <- chooseInt (0, 100)
         iterate (>>= applyRandomMove) (pure initialBoard) !! moveCount
 
--- TESTS -------------------------------------
+-- PROPERTY TESTS -------------------------------------
 
 prop_changeturn = 
     \board -> all (\candidate -> case candidate of 
                                     (move, board') -> (turn board) /= (turn board'))
                   $ candidateMoves board
 
--- TESTS -------------------------------------
+-- EXAMPLE TESTS --------------------------------------
+
+unitTests = testGroup "Unit tests"
+  [ testCase "Parse UCI command" $ do
+      parseUCICommand "uci" @?= Just UCI
+      parseUCICommand "quit" @?= Just Quit
+      parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
+      parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (Move 5 2 5 4 Nothing))
+  ]
+
+
 
 return []
-tests :: TestTree
-tests = testProperties "Tests" $allProperties
-main = defaultMain tests
+main = defaultMain $ testGroup "Tests"
+    [testProperties "Property tests" $allProperties, unitTests]

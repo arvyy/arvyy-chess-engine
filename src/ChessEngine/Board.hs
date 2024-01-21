@@ -193,7 +193,10 @@ moveToString (Move fromx fromy tox toy promo) = do
     
 
 initialBoard :: ChessBoard
-initialBoard = fromJust $ loadFen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+initialBoard = 
+    let (board, _) = fromJust $ loadFen "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+    in board
+            
 
 otherPlayer :: PlayerColor -> PlayerColor
 otherPlayer Black = White
@@ -531,12 +534,20 @@ loadCastlingRights ('q':rest) (wk, wq, bk, bq) = loadCastlingRights rest (wk, wq
 loadCastlingRights (' ':rest) rights = Just (rights, rest)
 loadCastlingRights _ _  = Nothing
 
-loadEnPassant :: String -> Maybe (Maybe Int)
-loadEnPassant ('-':_) = Just Nothing
-loadEnPassant (x:y:_) = fmap (\c -> Just (fst c)) $ parseSquareReference [x, y]
+loadEnPassant :: String -> Maybe ((Maybe Int), String)
+loadEnPassant ('-':' ':rest) = Just (Nothing, rest)
+loadEnPassant (x:y:' ':rest) = do
+    (x', _) <- parseSquareReference [x, y]
+    return $ (Just x', rest)
+
 loadEnPassant _ = Nothing
 
-loadFen :: String -> Maybe ChessBoard
+skipUntilWhitespace :: String -> String
+skipUntilWhitespace (' ':rest) = rest
+skipUntilWhitespace [] = []
+skipUntilWhitespace (_:rest) = skipUntilWhitespace rest
+
+loadFen :: String -> Maybe (ChessBoard, String)
 loadFen input = do
     (pieces, input) <- loadFenPieces input (1, 8) ChessBoardPositions 
                                                     { white = zeroBits
@@ -550,13 +561,16 @@ loadFen input = do
                                                     }
     (turn, input) <- loadTurn input
     ((wk, wq, bk, bq), input) <- loadCastlingRights input (False, False, False, False)
-    enPassant <- loadEnPassant input
-    return ChessBoard
-        { turn = turn
-        , pieces = pieces
-        , enPassant = enPassant
-        , whiteKingCastle = wk
-        , blackKingCastle = bk
-        , whiteQueenCastle = wq
-        , blackQueenCastle = bq
-        }
+    (enPassant, input) <- loadEnPassant input
+    let input = skipUntilWhitespace input
+    let input = skipUntilWhitespace input
+    let board = ChessBoard
+                    { turn = turn
+                    , pieces = pieces
+                    , enPassant = enPassant
+                    , whiteKingCastle = wk
+                    , blackKingCastle = bk
+                    , whiteQueenCastle = wq
+                    , blackQueenCastle = bq
+                    }
+    return (board, input)

@@ -1,4 +1,4 @@
-cabal-version:       >=1.10
+cabal-version:       2.2
 name:                chessengine
 version:             0.1.0.0
 license-file:        LICENSE
@@ -7,26 +7,31 @@ maintainer:          nma.arvydas.silanskas@gmail.com
 build-type:          Simple
 extra-source-files:  CHANGELOG.md
 
-executable chessengine_uci
-  main-is: ChessEngine/UCIMain.hs
+common deps
   build-depends:
      base >=4.14 && <4.15,
      containers >=0.6,
      transformers >=0.5,
      time >=1.9,
-     stm >=2.5
+     stm >=2.5,
+     regex-pcre-builtin >=0.95
+  other-modules: ChessEngine.Board, ChessEngine.PositionEval, ChessEngine.UCI
+    
+
+executable chessengine_uci
+  import: deps
+  main-is: ChessEngine/UCIMain.hs
   hs-source-dirs: src
   default-language: Haskell2010
-  other-modules: ChessEngine.Board, ChessEngine.PositionEval
 
 test-suite board-tests
+  import: deps
   type: exitcode-stdio-1.0
   main-is: BoardTest.hs
-  other-modules: ChessEngine.Board, ChessEngine.PositionEval
   hs-source-dirs: src, test
   default-language: Haskell2010
   build-depends: 
-    base >=4.14 && <4.15,
     tasty >=1.4.3,
     tasty-quickcheck >=0.10.2,
+    tasty-hunit >=0.10.0.3,
     QuickCheck >=2.14.3
