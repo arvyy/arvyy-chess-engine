@@ -1,4 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
 
 module ChessEngine.PositionEval
   ( PositionEval,
@@ -76,7 +77,7 @@ data EvaluateResult = EvaluateResult
     evaluation :: !PositionEval,
     moves :: ![Move],
     continuation :: EvaluateResult
-  }
+  } deriving Show
 
 evaluate' :: EvaluateParams -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
 evaluate' params = do
@@ -97,9 +98,9 @@ evaluate' params = do
 
 -- TODO store cache hits; periodically clean up entries without hits
 resumeEvaluate' :: EvaluateParams -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
-resumeEvaluate' params
+resumeEvaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth, board, nodesParsed}
   | Just cachedValue <- Map.lookup board cache = return (cachedValue, cache, nodesParsed + 1)
-  | (null candidates) =
+  | null candidates =
       let eval = (outOfMovesEval board, moves)
        in return (eval, Map.insert board eval cache, nodesParsed + 1)
   | depth == 0 =
@@ -107,8 +108,6 @@ resumeEvaluate' params
        in return (eval, Map.insert board eval cache, nodesParsed + 1)
   | otherwise = foldCandidates cache candidates alpha beta
   where
-    EvaluateParams {cache = cache, moves = moves, firstChoice = firstChoice, alpha = alpha, beta = beta, depth = depth, board = board, nodesParsed = nodesParsed} = params
-
     foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
     foldCandidates cache candidates alpha beta =
       if (turn board) == White
