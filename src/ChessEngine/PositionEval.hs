@@ -12,6 +12,7 @@ import ChessEngine.Board
 import Data.List (sortBy)
 import qualified Data.Map as Map
 import Data.Maybe (fromJust)
+import Data.Foldable
 
 type BoardCache = Map.Map ChessBoard (PositionEval, [Move])
 
@@ -33,7 +34,7 @@ instance Ord PositionEval where
 
 finalDepthEval :: ChessBoard -> PositionEval
 finalDepthEval board =
-  Score $ foldr (\piece score -> score + scorePiece piece) 0 $ boardPositions board
+  Score $ foldl' (\score piece -> score + scorePiece piece) 0 $ boardPositions board
   where
     pieceMul :: PlayerColor -> Float
     pieceMul color = if color == White then 1 else -1
@@ -51,8 +52,8 @@ finalDepthEval board =
         let isOwnSide y = case piece of
                 (_, _, ChessPiece White _) -> y < 5
                 _ -> y > 4
-            (ownSide, opponentSide) = foldr 
-                (\(_, y) (own, opponent) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
+            (ownSide, opponentSide) = foldl'
+                (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
                 (0.0, 0.0)
                 (pieceThreats board piece)
         in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.5
