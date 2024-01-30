@@ -41,11 +41,24 @@ finalDepthEval board =
 
     scorePiece :: (Int, Int, ChessPiece) -> Float
     scorePiece (_, _, ChessPiece player King) = 0
-    scorePiece (_, _, ChessPiece player Queen) = 9 * pieceMul player
-    scorePiece (_, _, ChessPiece player Bishop) = 3 * pieceMul player
-    scorePiece (_, _, ChessPiece player Horse) = 3 * pieceMul player
-    scorePiece (_, _, ChessPiece player Rock) = 5 * pieceMul player
-    scorePiece (_, _, ChessPiece player Pawn) = 1 * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Queen) = (9 + scorePieceThreats board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Pawn) = (1 + scorePieceThreats board piece) * pieceMul player
+
+    scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+    scorePieceThreats board piece =
+        let isOwnSide y = case piece of
+                (_, _, ChessPiece White _) -> y < 5
+                _ -> y > 4
+            (ownSide, opponentSide) = foldr 
+                (\(_, y) (own, opponent) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
+                (0.0, 0.0)
+                (pieceThreats board piece)
+        in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.5
+            
+
 
 -- end of the game
 outOfMovesEval :: ChessBoard -> PositionEval
@@ -81,7 +94,7 @@ data EvaluateResult = EvaluateResult
 
 evaluate' :: EvaluateParams -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
 evaluate' params = do
-  if depth `mod` 4 == 0
+  if depth `mod` 1000 == 0
     then shift $ \k ->
       return
         EvaluateResult
@@ -102,10 +115,10 @@ resumeEvaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, d
   | Just cachedValue <- Map.lookup board cache = return (cachedValue, cache, nodesParsed + 1)
   | null candidates =
       let eval = (outOfMovesEval board, moves)
-       in return (eval, Map.insert board eval cache, nodesParsed + 1)
+       in return (eval, {- Map.insert board eval -} cache, nodesParsed + 1)
   | depth == 0 =
       let eval = (finalDepthEval board, moves)
-       in return (eval, Map.insert board eval cache, nodesParsed + 1)
+       in return (eval, {- Map.insert board eval -} cache, nodesParsed + 1)
   | otherwise = foldCandidates cache candidates alpha beta
   where
     foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
@@ -120,7 +133,14 @@ resumeEvaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, d
         then return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
         else do
           let newMovesPath = moves ++ [candidateMove]
-          (moveValue, newCache, newNodesParsed) <- evaluate' params {moves = newMovesPath, firstChoice = (followUpFirstChoice candidateMove), depth = (depth - 1), board = candidateBoard, nodesParsed = nodesParsed}
+          (moveValue, newCache, newNodesParsed) <- evaluate' params {
+            moves = newMovesPath, 
+            firstChoice = (followUpFirstChoice candidateMove),
+            depth = (depth - 1), 
+            board = candidateBoard, 
+            nodesParsed = nodesParsed,
+            alpha = alpha,
+            beta = beta }
           let newBestMoveValue =
                 if (first || compare (fst bestMoveValue) (fst moveValue) == LT)
                   then moveValue
@@ -134,7 +154,14 @@ resumeEvaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, d
         then return (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
         else do
           let newMovesPath = moves ++ [candidateMove]
-          (moveValue, newCache, newNodesParsed) <- evaluate' params {moves = newMovesPath, firstChoice = (followUpFirstChoice candidateMove), depth = (depth - 1), board = candidateBoard, nodesParsed = nodesParsed}
+          (moveValue, newCache, newNodesParsed) <- evaluate' params {
+            moves = newMovesPath, 
+            firstChoice = (followUpFirstChoice candidateMove), 
+            depth = (depth - 1), 
+            board = candidateBoard, 
+            nodesParsed = nodesParsed,
+            alpha = alpha,
+            beta = beta }
           let newBestMoveValue =
                 if (first || compare (fst bestMoveValue) (fst moveValue) == GT)
                   then moveValue

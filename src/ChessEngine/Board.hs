@@ -1,3 +1,6 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NamedFieldPuns #-}
+
 module ChessEngine.Board
   ( ChessPieceType (..),
     PlayerColor (..),
@@ -14,6 +17,7 @@ module ChessEngine.Board
     parseMove,
     moveToString,
     loadFen,
+    pieceThreats
   )
 where
 
@@ -46,6 +50,40 @@ positionsToList positions = do
     Nothing -> []
     Just p -> [p]
   return (x, y, piece)
+
+-- returns list of positions for given player, ordered by piece strength
+-- (because this method is used for candidate moves / check checks, and it's heuristically
+--  better to first use powerful pieces for better tree pruning)
+playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [(Int, Int, ChessPiece)]
+playerPositionsToList ChessBoardPositions{ black, white, bishops, horses, queens, kings, pawns, rocks } color =
+    collectValues Queen queens ++
+    collectValues Rock rocks ++
+    collectValues Bishop bishops ++
+    collectValues Horse horses ++
+    collectValues Pawn pawns ++
+    collectValues King kings
+    where
+        playerbitmap = if color == White then white else black
+        collectValues pieceType bitmap = do
+            let bitmap' = bitmap .&. playerbitmap
+            x <- [1..8]
+            y <- [1..8]
+            let index = coordsToBitIndex x y
+            if testBit bitmap' index
+            then return (x, y, ChessPiece color pieceType)
+            else mempty
+
+playerKingPosition :: ChessBoardPositions -> PlayerColor -> (Int, Int)
+playerKingPosition ChessBoardPositions{ black, white, kings } color =
+    let bitmap = (if color == White then white else black) .&. kings
+    in bitIndexToCoords (countTrailingZeros bitmap)
+
+bitIndexToCoords :: Int -> (Int, Int)
+bitIndexToCoords index =
+    let 
+        x' = mod index 8
+        y' = div index 8
+    in (x' + 1, y' + 1)
 
 coordsToBitIndex :: Int -> Int -> Int
 coordsToBitIndex x y =
@@ -364,31 +402,16 @@ pieceThreatsRay color board (x, y) (dx, dy) =
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
 squareUnderThreat board player x y =
-  let opponentPieces =
-        filter
-          ( \p -> case p of
-              (_, _, ChessPiece pieceColor _) -> player /= pieceColor
-          )
-          $ positionsToList (pieces board) -- TODO find directly without intermediate list
+  let opponentColor = if player == White then Black else White
+      opponentPieces = playerPositionsToList (pieces board) opponentColor
       opponentThreats = concat (map (\p -> pieceThreats board p) opponentPieces)
       matchingThreats = filter ((==) (x, y)) opponentThreats
    in not (null matchingThreats)
 
 playerInCheck :: ChessBoard -> PlayerColor -> Bool
 playerInCheck board player =
-  let kings =
-        filter
-          ( \p -> case p of
-              (_, _, ChessPiece piecePlayer King) -> piecePlayer == player
-              _ -> False
-          )
-          $ positionsToList (pieces board) -- TODO find directly without intermediate list
-      king = case kings of
-        [k] -> k
-        [] -> error $ "Missing king on the board " ++ (show board)
-        (k : rest) -> error $ "Multiple kings on the board for " ++ (show board)
-   in case king of
-        (x, y, _) -> squareUnderThreat board player x y
+    let (x, y) = playerKingPosition (pieces board) player
+    in squareUnderThreat board player x y
 
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 pawnCandidateMoves board x y player =
@@ -398,7 +421,7 @@ pawnCandidateMoves board x y player =
           else (-1, y == 7, y == 4, y == 2)
       y' = y + dir
       aheadIsClear =
-        inBounds x (y + 2 * dir) && case pieceOnSquare board x y' of
+        inBounds x (y + dir) && case pieceOnSquare board x y' of
           Just _ -> False
           Nothing -> True
       normalCaptures = do
@@ -481,12 +504,7 @@ pieceCandidateMoves board piece =
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
   let player = (turn board)
-      playerPieces =
-        filter
-          ( \p -> case p of
-              (_, _, ChessPiece pieceColor _) -> pieceColor == player
-          )
-          $ positionsToList (pieces board) -- TODO find directly without intermediate list
+      playerPieces = playerPositionsToList (pieces board) player
       piecesCandidates = map (pieceCandidateMoves board) playerPieces
    in concat piecesCandidates
 

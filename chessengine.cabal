@@ -17,12 +17,19 @@ common deps
      regex-pcre-builtin >=0.95
   other-modules: ChessEngine.Board, ChessEngine.PositionEval, ChessEngine.UCI
     
-
 executable chessengine_uci
   import: deps
   main-is: ChessEngine/UCIMain.hs
   hs-source-dirs: src
   default-language: Haskell2010
+
+executable chessengine_benchmark
+  import: deps
+  main-is: EvalBenchmark.hs
+  hs-source-dirs: src, benchmark
+  default-language: Haskell2010
+  build-depends: 
+    criterion
 
 test-suite board-tests
   import: deps
