@@ -115,10 +115,10 @@ resumeEvaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, d
   | Just cachedValue <- Map.lookup board cache = return (cachedValue, cache, nodesParsed + 1)
   | null candidates =
       let eval = (outOfMovesEval board, moves)
-       in return (eval, {- Map.insert board eval -} cache, nodesParsed + 1)
+       in return (eval, Map.insert board eval cache, nodesParsed + 1)
   | depth == 0 =
       let eval = (finalDepthEval board, moves)
-       in return (eval, {- Map.insert board eval -} cache, nodesParsed + 1)
+       in return (eval, Map.insert board eval cache, nodesParsed + 1)
   | otherwise = foldCandidates cache candidates alpha beta
   where
     foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Cont EvaluateResult ((PositionEval, [Move]), BoardCache, Int)
