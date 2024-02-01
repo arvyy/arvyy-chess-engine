@@ -1,5 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.PositionEval
   ( PositionEval,
@@ -10,11 +11,11 @@ where
 
 import ChessEngine.Board
 import Data.List (sortBy)
-import qualified Data.Map as Map
+import qualified Data.HashMap.Strict as Map
 import Data.Maybe (fromJust)
 import Data.Foldable
 
-type BoardCache = Map.Map ChessBoard (PositionEval, [Move])
+type BoardCache = Map.HashMap ChessBoard (PositionEval, [Move])
 
 data PositionEval = Draw | WhiteWin | BlackWin | Score !Float deriving (Eq, Show)
 
@@ -97,11 +98,17 @@ evaluate' :: EvaluateParams -> ((PositionEval, [Move]), BoardCache, Int)
 evaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth, board, nodesParsed}
   | Just cachedValue <- Map.lookup board cache = (cachedValue, cache, nodesParsed + 1)
   | null candidates =
-      let eval = (outOfMovesEval board, moves)
-       in (eval, Map.insert board eval cache, nodesParsed + 1)
+      let 
+        !eval = (outOfMovesEval board, moves)
+        !cache' = Map.insert board eval cache
+        !nodesParsed' = nodesParsed + 1
+      in (eval, cache', nodesParsed')
   | depth == 0 =
-      let eval = (finalDepthEval board, moves)
-       in (eval, Map.insert board eval cache, nodesParsed + 1)
+      let 
+        !eval = (finalDepthEval board, moves)
+        !cache' = Map.insert board eval cache
+        !nodesParsed' = nodesParsed + 1
+      in (eval, cache', nodesParsed')
   | otherwise = foldCandidates cache candidates alpha beta
   where
     foldCandidates :: BoardCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache, Int)
@@ -113,7 +120,7 @@ evaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth, 
     foldCandidatesWhite :: Int -> BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache, Int)
     foldCandidatesWhite nodesParsed cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta =
       if alpha >= beta
-        then (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
+        then {-# SCC "foldWhite" #-} (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
         else
           let newMovesPath = moves ++ [candidateMove]
               (moveValue, newCache, newNodesParsed) = evaluate' params {
@@ -134,7 +141,7 @@ evaluate' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth, 
     foldCandidatesBlack :: Int -> BoardCache -> Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), BoardCache, Int)
     foldCandidatesBlack nodesParsed cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta =
       if alpha >= beta
-        then (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
+        then {-# SCC "foldWhite" #-} (bestMoveValue, Map.insert board bestMoveValue cache, nodesParsed)
         else 
           let newMovesPath = moves ++ [candidateMove]
               (moveValue, newCache, newNodesParsed) = evaluate' params {

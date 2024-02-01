@@ -68,7 +68,7 @@ parseUCICommand input
                   whiteIncrement = Nothing,
                   blackIncrement = Nothing,
                   movesToGo = Nothing,
-                  depth = Just 6, -- TODO fix initial state
+                  depth = Just 4, -- TODO fix initial state
                   nodes = Nothing,
                   mate = Nothing,
                   moveTime = Nothing,
@@ -95,5 +95,5 @@ parseUCICommand input
               then []
               else words $ take moveLen $ drop moveStart input
       moves <- sequence (map parseMove moveStrs)
-      board <- foldl (\maybeBoard move -> maybeBoard >>= (\board -> applyMove board move)) (Just board) moves
+      board <- foldl' (\maybeBoard move -> maybeBoard >>= (\board -> applyMove board move)) (Just board) moves
       return $ Position board

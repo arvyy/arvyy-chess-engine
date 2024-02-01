@@ -1,5 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -26,6 +27,8 @@ import Data.Char
 import Data.Int (Int64)
 import Data.Maybe
 import GHC.Stack
+import Data.Hashable
+import GHC.Generics (Generic)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -37,7 +40,7 @@ data ChessBoardPositions = ChessBoardPositions
     pawns :: !Int64,
     rocks :: !Int64
   }
-  deriving (Eq, Ord)
+  deriving (Eq, Ord, Generic)
 
 instance Show ChessBoardPositions where
   show positions = show $ positionsToList positions
@@ -145,7 +148,7 @@ data ChessPieceType = Pawn | Horse | Rock | Queen | King | Bishop deriving (Show
 
 data PromoChessPieceType = PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq)
 
-data PlayerColor = Black | White deriving (Eq, Show, Ord)
+data PlayerColor = Black | White deriving (Eq, Show, Ord, Generic)
 
 data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq)
 
@@ -160,7 +163,11 @@ data ChessBoard = ChessBoard
     blackKingCastle :: !Bool,
     blackQueenCastle :: !Bool
   }
-  deriving (Eq, Show, Ord)
+  deriving (Eq, Show, Ord, Generic)
+
+instance Hashable PlayerColor
+instance Hashable ChessBoardPositions
+instance Hashable ChessBoard
 
 data Move = Move
   { fromCol :: !Int,
