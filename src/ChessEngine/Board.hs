@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -14,6 +15,7 @@ module ChessEngine.Board
     candidateMoves,
     initialBoard,
     applyMove,
+    isCaptureMove,
     playerInCheck,
     parseMove,
     moveToString,
@@ -69,17 +71,20 @@ playerPositionsToList ChessBoardPositions{ black, white, bishops, horses, queens
         playerbitmap = if color == White then white else black
         collectValues pieceType bitmap = do
             let bitmap' = bitmap .&. playerbitmap
-            x <- [1..8]
-            y <- [1..8]
-            let index = coordsToBitIndex x y
-            if testBit bitmap' index
-            then return (x, y, ChessPiece color pieceType)
-            else mempty
+            (x, y) <- bitmapToCoords bitmap'
+            return (x, y, ChessPiece color pieceType)
 
 playerKingPosition :: ChessBoardPositions -> PlayerColor -> (Int, Int)
 playerKingPosition ChessBoardPositions{ black, white, kings } color =
     let bitmap = (if color == White then white else black) .&. kings
     in bitIndexToCoords (countTrailingZeros bitmap)
+
+bitmapToCoords :: Int64 -> [(Int, Int)]
+bitmapToCoords bitmap =
+    if index == 64
+    then []
+    else bitIndexToCoords index : bitmapToCoords (clearBit bitmap index)
+    where index = (countTrailingZeros bitmap)
 
 bitIndexToCoords :: Int -> (Int, Int)
 bitIndexToCoords index =
@@ -143,6 +148,7 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit pawns bit = Just Pawn
       | testBit rocks bit = Just Rock
       | otherwise = Nothing
+
 
 data ChessPieceType = Pawn | Horse | Rock | Queen | King | Bishop deriving (Show, Eq)
 
@@ -249,6 +255,20 @@ otherPlayer White = Black
 
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board x y = pieceOnSquare' (pieces board) x y
+
+hasPieceOnSquare :: ChessBoard -> Int -> Int -> ChessPiece -> Bool
+hasPieceOnSquare ChessBoard{ pieces } x y (ChessPiece color pieceType) = 
+    testBit (playerBitboard .&. pieceBitboard) bit
+  where
+    playerBitboard = if color == White then (white pieces) else (black pieces)
+    pieceBitboard = case pieceType of
+        Pawn -> pawns pieces
+        Rock -> rocks pieces
+        Queen -> queens pieces
+        King -> kings pieces
+        Horse -> horses pieces
+        Bishop -> bishops pieces
+    bit = coordsToBitIndex x y
 
 -- applies move blindly without validation for checks or piece movement rules
 -- partial function if reference position is empty
@@ -409,11 +429,62 @@ pieceThreatsRay color board (x, y) (dx, dy) =
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
 squareUnderThreat board player x y =
-  let opponentColor = if player == White then Black else White
-      opponentPieces = playerPositionsToList (pieces board) opponentColor
-      opponentThreats = concat (map (\p -> pieceThreats board p) opponentPieces)
-      matchingThreats = filter ((==) (x, y)) opponentThreats
-   in not (null matchingThreats)
+  threatenedByBishopOrQueen ||
+  threatenedByRockOrQueen ||
+  threatenedByHorse ||
+  threatenedByPawn ||
+  threatenedByKing
+
+  where
+      opponentColor = if player == White then Black else White
+      threatenedByHorse = not $ null $ do
+        (x', y') <- 
+            [ (x + 1, y + 2),
+              (x + 1, y - 2),
+              (x - 1, y + 2),
+              (x - 1, y - 2),
+              (x + 2, y + 1),
+              (x + 2, y - 1),
+              (x - 2, y + 1),
+              (x - 2, y - 1) ]
+        if inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse)
+        then [True]
+        else []
+
+      threatenedOnRay :: [ChessPieceType] -> Int -> Int -> Bool
+      threatenedOnRay threateningTypes dx dy =
+        let ray = fmap (\i -> (x + dx * i, y + dy * i)) [1, 2, 3, 4, 5, 6, 7]
+            fold ((x', y'):rest) =
+                if inBounds x' y'
+                then case pieceOnSquare board x' y' of
+                    Just (ChessPiece color' pieceType') ->
+                        color' == opponentColor && elem pieceType' threateningTypes 
+                    Nothing -> fold rest
+                else False
+            fold [] = False
+        in fold ray
+
+      threatenedByBishopOrQueen =
+        threatenedOnRay [Queen, Bishop] 1 1 ||
+        threatenedOnRay [Queen, Bishop] (-1) 1 ||
+        threatenedOnRay [Queen, Bishop] 1 (-1) ||
+        threatenedOnRay [Queen, Bishop] (-1) (-1)
+
+      threatenedByRockOrQueen =
+        threatenedOnRay [Queen, Rock] 0 1 ||
+        threatenedOnRay [Queen, Rock] 1 0 ||
+        threatenedOnRay [Queen, Rock] 0 (-1) ||
+        threatenedOnRay [Queen, Rock] (-1) 0
+      
+      threatenedByPawn =
+        let y' = if player == White then y + 1 else y - 1
+            pawnExists x' = inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Pawn)
+        in pawnExists (x - 1) || pawnExists (x + 1)
+
+      threatenedByKing =
+        let (x', y') = playerKingPosition (pieces board) opponentColor
+        in abs (x - x') <= 1 && abs (y - y') <= 1
+        
 
 playerInCheck :: ChessBoard -> PlayerColor -> Bool
 playerInCheck board player =
@@ -533,6 +604,13 @@ applyMove board move =
    in case matches of
         [] -> Nothing
         ((move, board') : _) -> Just board'
+
+isCaptureMove :: ChessBoard -> Move -> Bool
+isCaptureMove board Move { toCol, toRow } =
+    case pieceOnSquare board toCol toRow of
+        Just _ -> True
+        _ -> False
+    
 
 -- returns parsed pieces + rest of input
 loadFenPieces :: String -> (Int, Int) -> ChessBoardPositions -> Maybe (ChessBoardPositions, String)

@@ -105,7 +105,7 @@ yieldThinkResult state = (bestMove, blank)
     EngineState {result = Just evalResult} = state
     EvaluateResult {moves = moves} = evalResult
     bestMove = case moves of
-      [] -> [] -- should never happen
+      [] -> []
       (m : _) -> case moveToString m of
         Just str -> ["bestmove " ++ str]
         Nothing -> []

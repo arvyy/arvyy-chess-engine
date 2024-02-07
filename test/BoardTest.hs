@@ -9,6 +9,7 @@ import Test.Tasty.HUnit
 import Data.Maybe
 
 import ChessEngine.Board
+import ChessEngine.PositionEval
 import ChessEngine.UCI
 
 -- makes random valid move or returns itself if no moves available
