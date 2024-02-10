@@ -51,6 +51,7 @@ unitTests = testGroup "Unit tests"
   [ testCase "Parse UCI command" $ do
       parseUCICommand "uci" @?= Just UCI
       parseUCICommand "quit" @?= Just Quit
+      parseUCICommand "position startpos" @?= Just (Position initialBoard)
       parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
       parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (Move 5 2 5 4 Nothing))
   , testCase "Candidates moves" $ do

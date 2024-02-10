@@ -77,11 +77,18 @@ parseUCICommand input
           return $ Go props
         else Nothing
     tryParseGoParts input props = Just props -- TODO
-    tryParsePosition :: Maybe UCICommand
-    tryParsePosition = do
-      ((posStart, posLen), (moveStart, moveLen)) <- case (input =~ "^position (.+) moves ?(.*)$") :: (AllSubmatches [] (Int, Int)) of
-        (AllSubmatches (all : positionStr : moveStrs : [])) -> Just (positionStr, moveStrs)
-        _ -> Nothing
+    tryParsePosition =
+        let posWithMoves = case (input =~ "^position (.+) moves ?(.*)$") :: (AllSubmatches [] (Int, Int)) of
+                                (AllSubmatches (all : positionStr : moveStrs : [])) -> Just (positionStr, moveStrs)
+                                _ -> Nothing
+            posWithoutMoves = case (input =~ "^position (.+)$") :: (AllSubmatches [] (Int, Int)) of
+                                (AllSubmatches (all : positionStr : [])) -> Just (positionStr, (0, 0))
+                                _ -> Nothing
+        in do
+            pos <- posWithMoves <|> posWithoutMoves
+            tryParsePosition' pos
+
+    tryParsePosition' ((posStart, posLen), (moveStart, moveLen)) = do
       let positionStr = take posLen $ drop posStart input
       board <-
         if positionStr == "startpos"
