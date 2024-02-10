@@ -270,6 +270,20 @@ hasPieceOnSquare ChessBoard{ pieces } x y (ChessPiece color pieceType) =
         Bishop -> bishops pieces
     bit = coordsToBitIndex x y
 
+findPiecePositions :: ChessBoard -> ChessPiece -> [(Int, Int)]
+findPiecePositions ChessBoard{ pieces } (ChessPiece color pieceType) =
+    bitmapToCoords $ playerBitboard .&. pieceBitboard
+    where
+        playerBitboard = if color == White then (white pieces) else (black pieces)
+        pieceBitboard = case pieceType of
+            Pawn -> pawns pieces
+            Rock -> rocks pieces
+            Queen -> queens pieces
+            King -> kings pieces
+            Horse -> horses pieces
+            Bishop -> bishops pieces
+    
+
 -- applies move blindly without validation for checks or piece movement rules
 -- partial function if reference position is empty
 applyMoveUnsafe :: ChessBoard -> Move -> ChessBoard
@@ -485,6 +499,26 @@ squareUnderThreat board player x y =
         let (x', y') = playerKingPosition (pieces board) opponentColor
         in abs (x - x') <= 1 && abs (y - y') <= 1
         
+playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
+playerPotentiallyPinned board player = 
+    hasPieceOnFileOrRank queens ||
+    hasPieceOnDiagonal queens ||
+    hasPieceOnDiagonal bishops ||
+    hasPieceOnFileOrRank rocks
+    where
+        opponentColor = if player == White then Black else White
+        (x, y) = playerKingPosition (pieces board) player
+        hasPieceOnFileOrRank lst =
+            not $ null $ filter
+                            (\(x', y') -> (x == x') || (y == y'))
+                            lst
+        hasPieceOnDiagonal lst =
+            not $ null $ filter
+                            (\(x', y') -> abs (y - y') == abs (x - x'))
+                            lst
+        queens = findPiecePositions board (ChessPiece opponentColor Queen)
+        rocks = findPiecePositions board (ChessPiece opponentColor Rock)
+        bishops = findPiecePositions board (ChessPiece opponentColor Bishop)
 
 playerInCheck :: ChessBoard -> PlayerColor -> Bool
 playerInCheck board player =
@@ -588,14 +622,23 @@ candidateMoves' board =
 
 candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
 candidateMoves board =
-  let player = (turn board)
-      candidates = candidateMoves' board
+  let candidates = candidateMoves' board
       validCandidates = do
         candidate <- candidates
         let board' = applyMoveUnsafe board candidate
-        let inCheck = playerInCheck board' player
+        let inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate)) && playerInCheck board' player
         if not inCheck then [(candidate, board')] else []
    in validCandidates
+  where
+    player = (turn board)
+    wasInCheck = playerInCheck board player
+    wasPotentiallyPinned = playerPotentiallyPinned board player
+    (king_x, king_y) = playerKingPosition (pieces board) player
+    movePotentiallyBreakingPin Move{ fromCol, fromRow } =
+        fromRow == king_y ||
+        fromCol == king_x ||
+        abs (fromRow - king_y) == abs (fromCol - king_x)
+
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move =
