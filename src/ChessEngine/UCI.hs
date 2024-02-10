@@ -68,7 +68,7 @@ parseUCICommand input
                   whiteIncrement = Nothing,
                   blackIncrement = Nothing,
                   movesToGo = Nothing,
-                  depth = Just 5,
+                  depth = Just 4,
                   nodes = Nothing,
                   mate = Nothing,
                   moveTime = Nothing,

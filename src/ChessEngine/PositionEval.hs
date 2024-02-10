@@ -22,10 +22,6 @@ newtype PositionEval = PositionEval Float
 
 negateEval (PositionEval v) = PositionEval (- v)
 
-whiteWin = PositionEval (1 / 0)
-blackWin = PositionEval ((-1) / 0)
-draw = PositionEval 0
-
 data TranspositionValue = TranspositionValue PositionEval Int
 
 type TranspositionTable = Map.HashMap ChessBoard TranspositionValue
@@ -91,11 +87,8 @@ outOfMovesEval board =
   let player = (turn board)
       inCheck = playerInCheck board player
    in if (not inCheck)
-        then draw
-        else
-          if (player == White)
-            then blackWin
-            else whiteWin
+        then PositionEval 0
+        else PositionEval $ (-1) / 0
 
 data EvaluateParams = EvaluateParams
   { cache :: !ChessCache,
@@ -143,18 +136,12 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
       in ((eval, moves), cache', nodesParsed')
   | depth <= 0 =
       let
-        !eval = performHorizonEval
+        !eval =  horizonEval 3 board alpha beta
         !cache' = putValue cache board 0 eval
         !nodesParsed' = nodesParsed + 1
       in ((eval, moves), cache', nodesParsed')
   | otherwise = foldCandidates cache candidates alpha beta
   where
-    
-    performHorizonEval =
-        if (turn board) == White
-        then horizonEval 3 board alpha beta
-        else negateEval (horizonEval 3 board (negateEval beta) (negateEval alpha))
-        
 
     horizonEval depth board alpha beta
         | depth <= 0 = finalDepthEval board
@@ -178,33 +165,30 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
 
     foldCandidates :: ChessCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), ChessCache, Int)
     foldCandidates cache candidates alpha beta =
-      if (turn board) == White
-      then foldCandidatesWhite cache True (blackWin, []) candidates alpha beta 0 True nodesParsed
-      else foldCandidatesBlack cache True (whiteWin, []) candidates alpha beta 0 True nodesParsed
+        foldCandidates' cache True (PositionEval $ (-1) / 0, []) candidates alpha beta 0 True nodesParsed
 
-    foldCandidatesWhite = foldCandidatesHelper (>) (\a b new -> (new, b)) (\a@(PositionEval v) b -> (a, PositionEval (v + 0.001)))
-    foldCandidatesBlack = foldCandidatesHelper (<) (\a b new -> (a, new)) (\a b@(PositionEval v) -> (PositionEval (v - 0.001), b))
-    foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex allowLMR nodesParsed
+    foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex allowLMR nodesParsed
         | alpha >= beta = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed)
 
           -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
           -- evaluate with reduced depth (LMR).
         | siblingIndex > 1 && (maxDepth - depth) > 1 && allowLMR && not (isCaptureMove board candidateMove) =
           let newMovesPath = moves ++ [candidateMove]
-              (moveValue, newCache, newNodesParsed) = evaluate' params {
+              params' = params {
                 moves = newMovesPath,
                 firstChoice = (followUpFirstChoice candidateMove),
                 cache = cache,
                 depth = (depth - 2), -- subtract 2 to lower depth search in fringe node
                 board = candidateBoard,
                 nodesParsed = nodesParsed,
-                alpha = alpha,
-                beta = beta }
+                alpha = negateEval beta,
+                beta = negateEval alpha }
+              (moveValue, newCache, newNodesParsed) = case evaluate' params' of ((v, moves), cache, nodes) -> ((negateEval v, moves), cache, nodes)
           in
-            if isBetter (fst moveValue) (fst bestMoveValue)
+            if (fst moveValue) > (fst bestMoveValue)
             -- if found better move, re-evaluate with proper depth
-            then (foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow newCache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex False newNodesParsed)
-            else (foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow newCache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) True newNodesParsed)
+            then (foldCandidates' newCache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex False newNodesParsed)
+            else (foldCandidates' newCache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) True newNodesParsed)
 
         | otherwise = 
           let newMovesPath = moves ++ [candidateMove]
@@ -215,19 +199,19 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
                     depth = (depth - 1),
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
-                    alpha = alpha,
-                    beta = beta }
-              (moveValue, newCache, newNodesParsed) = evaluate' params'
+                    alpha = negateEval beta,
+                    beta = negateEval alpha }
+              (moveValue, newCache, newNodesParsed) = case evaluate' params' of ((v, moves), cache, nodes) -> ((negateEval v, moves), cache, nodes)
               newBestMoveValue =
-                if (isBetter (fst moveValue) (fst bestMoveValue))
+                if ((fst moveValue) > (fst bestMoveValue))
                   then moveValue
                   else bestMoveValue
-              (newAlpha, newBeta) = getNewAlphaBeta alpha beta (fst newBestMoveValue)
-              fullSearchContinuation = foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow newCache False newBestMoveValue restCandidates newAlpha newBeta (siblingIndex + 1) True newNodesParsed
+              newAlpha = max alpha (fst newBestMoveValue)
+              fullSearchContinuation = foldCandidates' newCache False newBestMoveValue restCandidates newAlpha beta (siblingIndex + 1) True newNodesParsed
           in if first
              then fullSearchContinuation
              -- not a first move: try using null-window pruning
-             else let (nullAlpha, nullBeta) = makeNullAlphaBetaWindow alpha beta
+             else let nullBeta = case alpha of PositionEval v -> PositionEval (v + 0.0001)
                       params' =  params {
                             moves = newMovesPath,
                             firstChoice = (followUpFirstChoice candidateMove),
@@ -235,16 +219,16 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
                             depth = (depth - 1),
                             board = candidateBoard,
                             nodesParsed = nodesParsed,
-                            alpha = nullAlpha,
-                            beta = nullBeta }
-                      (moveValue, _, _) = evaluate' params'
-                  in if isBetter (fst moveValue) (fst bestMoveValue)
+                            alpha = negateEval nullBeta,
+                            beta = negateEval alpha }
+                      moveValue = case evaluate' params' of ((v, moves), _, _) -> (negateEval v, moves)
+                  in if (fst moveValue) > (fst bestMoveValue)
                      -- found better with reduced window: do full search
-                     then (fullSearchContinuation)
+                     then fullSearchContinuation
                      -- cut off
-                     else (foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow newCache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) True newNodesParsed)
+                     else (foldCandidates' newCache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) True newNodesParsed)
 
-    foldCandidatesHelper _ _ _ cache _ bestMoveValue [] _ _ _ _ nodesParsed = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed + 1)
+    foldCandidates' cache _ bestMoveValue [] _ _ _ _ nodesParsed = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed + 1)
 
     candidates = 
       let newCandidatesList = case firstChoice of
@@ -294,8 +278,8 @@ evaluateIteration cache board lastDepthBest depth =
           { cache = cache,
             moves = [],
             firstChoice = firstChoice,
-            alpha = blackWin,
-            beta = whiteWin,
+            alpha = PositionEval $ (-1) / 0,
+            beta = PositionEval $ 1 / 0,
             depth = depth,
             maxDepth = depth,
             board = board,
@@ -308,12 +292,13 @@ evaluate :: ChessBoard -> Int -> EvaluateResult
 evaluate board finalDepth =
   let
     (_, (eval, moves), _, nodesParsed) = iterate computeNext firstEvaluation !! (finalDepth - startingDepth)
+    evalTransformation = if (turn board) == White then id else negateEval
     result =
         EvaluateResult
           { moves = moves,
             nodesParsed = nodesParsed,
             finished = True,
-            evaluation = eval,
+            evaluation = evalTransformation eval,
             continuation = result
           }
   in result
@@ -325,4 +310,4 @@ evaluate board finalDepth =
         in (depth + 1, thisDepthBest, newCache', nodesParsed)
     startingDepth = 2
     firstEvaluation :: (Int, (PositionEval, [Move]), ChessCache, Int)
-    firstEvaluation = computeNext ((startingDepth - 1), (draw, []), create, 0)
+    firstEvaluation = computeNext ((startingDepth - 1), (PositionEval 0, []), create, 0)
