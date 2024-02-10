@@ -100,16 +100,14 @@ resumeThinking state now =
     EvaluateResult {nodesParsed = nodesParsed, finished = finished, continuation = continuation} = evalResult
 
 yieldThinkResult :: EngineState -> ([String], EngineState)
-yieldThinkResult state = (bestMove, blank)
+yieldThinkResult state = (infoCp ++ bestMove, blank)
   where
     EngineState {result = Just evalResult} = state
     EvaluateResult {moves = moves, evaluation = (PositionEval value) } = evalResult
-    cpValue = floor (value * 100)
+    infoCp = ["info cp " ++ show (floor (value * 100))]
     bestMove = case moves of
       [] -> []
       (m : _) -> case moveToString m of
         Just str -> 
-            [ "info cp " ++ (show cpValue)
-            , "bestmove " ++ str
-            ]
+            [ "bestmove " ++ str ]
         Nothing -> []

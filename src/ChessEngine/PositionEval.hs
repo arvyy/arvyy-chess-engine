@@ -203,7 +203,7 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
                     beta = negateEval alpha }
               (moveValue, newCache, newNodesParsed) = case evaluate' params' of ((v, moves), cache, nodes) -> ((negateEval v, moves), cache, nodes)
               newBestMoveValue =
-                if ((fst moveValue) > (fst bestMoveValue))
+                if (first || (fst moveValue) > (fst bestMoveValue))
                   then moveValue
                   else bestMoveValue
               newAlpha = max alpha (fst newBestMoveValue)
