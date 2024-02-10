@@ -56,12 +56,13 @@ getCandidates (ChessCache _ candidates) board = Map.lookup board candidates
 create :: ChessCache
 create = ChessCache Map.empty Map.empty
 
+-- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval :: ChessBoard -> PositionEval
 finalDepthEval board =
-  PositionEval $ foldl' (\score piece -> score + scorePiece piece) 0 $ boardPositions board
+    let score = foldl' (\score piece -> score + scorePiece piece) 0 $ boardPositions board
+    in PositionEval score
   where
-    pieceMul :: PlayerColor -> Float
-    pieceMul color = if color == White then 1 else -1
+    pieceMul color = if color == (turn board) then 1 else -1
 
     scorePiece :: (Int, Int, ChessPiece) -> Float
     scorePiece (_, _, ChessPiece player King) = 0

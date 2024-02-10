@@ -103,9 +103,13 @@ yieldThinkResult :: EngineState -> ([String], EngineState)
 yieldThinkResult state = (bestMove, blank)
   where
     EngineState {result = Just evalResult} = state
-    EvaluateResult {moves = moves} = evalResult
+    EvaluateResult {moves = moves, evaluation = (PositionEval value) } = evalResult
+    cpValue = floor (value * 100)
     bestMove = case moves of
       [] -> []
       (m : _) -> case moveToString m of
-        Just str -> ["bestmove " ++ str]
+        Just str -> 
+            [ "info cp " ++ (show cpValue)
+            , "bestmove " ++ str
+            ]
         Nothing -> []
