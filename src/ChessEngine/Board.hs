@@ -292,6 +292,7 @@ applyMoveUnsafe board (Move x y x' y' promotion) =
         Nothing -> error "Unsafe move tried to move unexisting piece"
         Just f -> f
       isEnPassantMove = pieceType == Pawn && (enPassant board) == Just x' && (if player == White then (y == 5) else (y == 4))
+      isDoubleDipMove = pieceType == Pawn && abs (y - y') == 2
       isKingCastleMove = pieceType == King && x == 5 && x' == 7
       isQueenCastleMove = pieceType == King && x == 5 && x' == 3
       isCastleMove = isKingCastleMove || isQueenCastleMove
@@ -331,6 +332,7 @@ applyMoveUnsafe board (Move x y x' y' promotion) =
             _ -> True
    in board
         { pieces = newPieces,
+          enPassant = if isDoubleDipMove then Just x else Nothing,
           turn = otherPlayer (turn board),
           whiteKingCastle = whiteKingCastle',
           blackKingCastle = blackKingCastle',
