@@ -1,7 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -28,8 +27,10 @@ import Data.Bits
 import Data.Char
 import Data.Int (Int64)
 import Data.Maybe
+import Data.Ord
 import GHC.Stack
 import Data.Hashable
+import Data.List (sortBy, partition)
 import GHC.Generics (Generic)
 
 data ChessBoardPositions = ChessBoardPositions
@@ -56,16 +57,14 @@ positionsToList positions = do
     Just p -> [p]
   return (x, y, piece)
 
--- returns list of positions for given player, ordered by piece strength
--- (because this method is used for candidate moves / check checks, and it's heuristically
---  better to first use powerful pieces for better tree pruning)
+-- returns list of positions for given player
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [(Int, Int, ChessPiece)]
 playerPositionsToList ChessBoardPositions{ black, white, bishops, horses, queens, kings, pawns, rocks } color =
-    collectValues Queen queens ++
-    collectValues Rock rocks ++
+    collectValues Pawn pawns ++
     collectValues Bishop bishops ++
     collectValues Horse horses ++
-    collectValues Pawn pawns ++
+    collectValues Rock rocks ++
+    collectValues Queen queens ++
     collectValues King kings
     where
         playerbitmap = if color == White then white else black
@@ -88,7 +87,7 @@ bitmapToCoords bitmap =
 
 bitIndexToCoords :: Int -> (Int, Int)
 bitIndexToCoords index =
-    let 
+    let
         x' = mod index 8
         y' = div index 8
     in (x' + 1, y' + 1)
@@ -150,7 +149,8 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | otherwise = Nothing
 
 
-data ChessPieceType = Pawn | Horse | Rock | Queen | King | Bishop deriving (Show, Eq)
+-- NB: that order must be increasing in piece value
+data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King  deriving (Show, Eq, Ord)
 
 data PromoChessPieceType = PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq)
 
@@ -257,7 +257,7 @@ pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board x y = pieceOnSquare' (pieces board) x y
 
 hasPieceOnSquare :: ChessBoard -> Int -> Int -> ChessPiece -> Bool
-hasPieceOnSquare ChessBoard{ pieces } x y (ChessPiece color pieceType) = 
+hasPieceOnSquare ChessBoard{ pieces } x y (ChessPiece color pieceType) =
     testBit (playerBitboard .&. pieceBitboard) bit
   where
     playerBitboard = if color == White then (white pieces) else (black pieces)
@@ -282,7 +282,7 @@ findPiecePositions ChessBoard{ pieces } (ChessPiece color pieceType) =
             King -> kings pieces
             Horse -> horses pieces
             Bishop -> bishops pieces
-    
+
 
 -- applies move blindly without validation for checks or piece movement rules
 -- partial function if reference position is empty
@@ -452,7 +452,7 @@ squareUnderThreat board player x y =
   where
       opponentColor = if player == White then Black else White
       threatenedByHorse = not $ null $ do
-        (x', y') <- 
+        (x', y') <-
             [ (x + 1, y + 2),
               (x + 1, y - 2),
               (x - 1, y + 2),
@@ -472,7 +472,7 @@ squareUnderThreat board player x y =
                 if inBounds x' y'
                 then case pieceOnSquare board x' y' of
                     Just (ChessPiece color' pieceType') ->
-                        color' == opponentColor && elem pieceType' threateningTypes 
+                        color' == opponentColor && elem pieceType' threateningTypes
                     Nothing -> fold rest
                 else False
             fold [] = False
@@ -489,7 +489,7 @@ squareUnderThreat board player x y =
         threatenedOnRay [Queen, Rock] 1 0 ||
         threatenedOnRay [Queen, Rock] 0 (-1) ||
         threatenedOnRay [Queen, Rock] (-1) 0
-      
+
       threatenedByPawn =
         let y' = if player == White then y + 1 else y - 1
             pawnExists x' = inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Pawn)
@@ -498,9 +498,9 @@ squareUnderThreat board player x y =
       threatenedByKing =
         let (x', y') = playerKingPosition (pieces board) opponentColor
         in abs (x - x') <= 1 && abs (y - y') <= 1
-        
+
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
-playerPotentiallyPinned board player = 
+playerPotentiallyPinned board player =
     hasPieceOnFileOrRank queens ||
     hasPieceOnDiagonal queens ||
     hasPieceOnDiagonal bishops ||
@@ -607,18 +607,45 @@ pieceCandidateMoves board piece =
   let x = case piece of (x, _, _) -> x
       y = case piece of (_, y, _) -> y
    in map
-        ( \p -> case p of
-            (x', y') -> Move x y x' y' Nothing
-        )
+        (\(x', y') -> Move x y x' y' Nothing)
         (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
+-- moves are ordered:
+--  1. attacks, first oredered by attacked piece strength descending, then by attacking piece ascending
+--  2. non-attacks
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
-  let player = (turn board)
+  let player = turn board
       playerPieces = playerPositionsToList (pieces board) player
-      piecesCandidates = map (pieceCandidateMoves board) playerPieces
-   in concat piecesCandidates
+      unsortedCandidatesWithCaptureInfo = concatMap pieceCandidatesWithCaptureInfo playerPieces
+      (captures, nonCaptures) = partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
+   in dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
+  where
+    -- first ChessPieceType is attacker, second is attacked
+    pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe (ChessPieceType, ChessPieceType))]
+    pieceCandidatesWithCaptureInfo piece@(x, y, ChessPiece _ attackerType) =
+        let moves = pieceCandidateMoves board piece
+            captureInfo Move{ toRow, toCol } =
+                case pieceOnSquare board toCol toRow of
+                    Just (ChessPiece _ attackedType) -> Just (attackerType, attackedType)
+                    _ -> Nothing
+        in  map (\move -> (move, captureInfo move)) moves
+
+    dropCaptureInfo :: [(Move, Maybe (ChessPieceType, ChessPieceType))] -> [Move]
+    dropCaptureInfo = map fst
+
+    -- returns order from least potential to most potential (will need to be flipped to move potential moves to front)
+    compareMoves :: (Move, Maybe (ChessPieceType, ChessPieceType)) -> (Move, Maybe (ChessPieceType, ChessPieceType)) -> Ordering
+    compareMoves (_, Nothing) (_, Nothing) = EQ
+    compareMoves (_, Just _) (_, Nothing) = GT
+    compareMoves (_, Nothing) (_, Just _) = LT
+    compareMoves (_, Just (attacker1, attacked1)) (_, Just (attacker2, attacked2)) =
+        let attackedCmp = compare attacked1 attacked2
+        in if attackedCmp /= EQ
+           then attackedCmp
+           else compare (Down attacker1) (Down attacker2)
+
 
 candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
 candidateMoves board =
@@ -630,7 +657,7 @@ candidateMoves board =
         if not inCheck then [(candidate, board')] else []
    in validCandidates
   where
-    player = (turn board)
+    player = turn board
     wasInCheck = playerInCheck board player
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition (pieces board) player
@@ -643,7 +670,7 @@ candidateMoves board =
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move =
   let candidates = candidateMoves board
-      matches = filter (\c -> (fst c) == move) candidates
+      matches = filter (\c -> fst c == move) candidates
    in case matches of
         [] -> Nothing
         ((move, board') : _) -> Just board'
@@ -653,7 +680,7 @@ isCaptureMove board Move { toCol, toRow } =
     case pieceOnSquare board toCol toRow of
         Just _ -> True
         _ -> False
-    
+
 
 -- returns parsed pieces + rest of input
 loadFenPieces :: String -> (Int, Int) -> ChessBoardPositions -> Maybe (ChessBoardPositions, String)
@@ -704,11 +731,11 @@ loadCastlingRights ('q' : rest) (wk, wq, bk, bq) = loadCastlingRights rest (wk, 
 loadCastlingRights (' ' : rest) rights = Just (rights, rest)
 loadCastlingRights _ _ = Nothing
 
-loadEnPassant :: String -> Maybe ((Maybe Int), String)
+loadEnPassant :: String -> Maybe (Maybe Int, String)
 loadEnPassant ('-' : ' ' : rest) = Just (Nothing, rest)
 loadEnPassant (x : y : ' ' : rest) = do
   (x', _) <- parseSquareReference [x, y]
-  return $ (Just x', rest)
+  return (Just x', rest)
 loadEnPassant _ = Nothing
 
 skipUntilWhitespace :: String -> String

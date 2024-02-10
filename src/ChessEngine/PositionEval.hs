@@ -20,6 +20,8 @@ import Debug.Trace
 newtype PositionEval = PositionEval Float
     deriving (Eq, Show, Ord)
 
+negateEval (PositionEval v) = PositionEval (- v)
+
 whiteWin = PositionEval (1 / 0)
 blackWin = PositionEval ((-1) / 0)
 draw = PositionEval 0
@@ -140,28 +142,38 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
       in ((eval, moves), cache', nodesParsed')
   | depth <= 0 =
       let
-        !eval = foldHorizonEval
+        !eval = performHorizonEval
         !cache' = putValue cache board 0 eval
         !nodesParsed' = nodesParsed + 1
       in ((eval, moves), cache', nodesParsed')
   | otherwise = foldCandidates cache candidates alpha beta
   where
-    foldHorizonEval =
-        if turn board == White
-        then foldHorizonEvalWhite blackWin candidates
-        else foldHorizonEvalBlack whiteWin candidates
+    
+    performHorizonEval =
+        if (turn board) == White
+        then horizonEval 3 board alpha beta
+        else negateEval (horizonEval 3 board (negateEval beta) (negateEval alpha))
+        
 
-    foldHorizonEvalWhite = foldHorizonEvalHelper (>)
-    foldHorizonEvalBlack = foldHorizonEvalHelper (<)
-    foldHorizonEvalHelper isBetter bestValue ((candidateMove, candidateBoard) : restCandidates) =
-        if isCaptureMove board candidateMove 
-        then foldHorizonEvalHelper isBetter bestValue restCandidates
-        else let value = (finalDepthEval candidateBoard)
-                 newBest = if isBetter value bestValue
-                           then value
-                           else bestValue
-             in foldHorizonEvalHelper isBetter newBest restCandidates
-    foldHorizonEvalHelper isBetter bestValue [] = bestValue
+    horizonEval depth board alpha beta
+        | depth <= 0 = finalDepthEval board
+        | otherwise =
+            let pat = finalDepthEval board
+                alpha' = max alpha pat
+                capturingMoves = (filter (\(move, board') -> isCaptureMove board move) (candidateMoves board))
+            in if pat >= beta
+               then beta
+               else foldHorizonEval depth capturingMoves alpha' beta
+
+    foldHorizonEval depth ((move, board'):rest) alpha beta =
+        let value = negateEval (horizonEval (depth - 1) board' (negateEval beta) (negateEval alpha))
+            alpha' = max alpha value
+        in if value >= beta
+           then beta
+           else foldHorizonEval depth rest alpha' beta
+                
+    foldHorizonEval _ [] alpha _ = alpha
+
 
     foldCandidates :: ChessCache -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ((PositionEval, [Move]), ChessCache, Int)
     foldCandidates cache candidates alpha beta =
@@ -232,17 +244,6 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
                      else (foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow newCache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) True newNodesParsed)
 
     foldCandidatesHelper _ _ _ cache _ bestMoveValue [] _ _ _ _ nodesParsed = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed + 1)
-
-    {-
-    candidates =
-      let candidatesList = candidateMoves board
-          newCandidatesList = case firstChoice of
-            [] -> candidatesList
-            (m : _) -> case partition (\c -> m == (fst c)) candidatesList of
-              ([], _) -> (sortCandidates candidatesList)
-              ((candidate : _), others) -> candidate : (sortCandidates others)
-       in newCandidatesList
-    -}
 
     candidates = 
       let newCandidatesList = case firstChoice of
