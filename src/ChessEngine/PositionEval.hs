@@ -172,7 +172,7 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
     foldCandidatesWhite = foldCandidatesHelper (>) (\a b new -> (new, b)) (\a@(PositionEval v) b -> (a, PositionEval (v + 0.001)))
     foldCandidatesBlack = foldCandidatesHelper (<) (\a b new -> (a, new)) (\a b@(PositionEval v) -> (PositionEval (v - 0.001), b))
     foldCandidatesHelper isBetter getNewAlphaBeta makeNullAlphaBetaWindow cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex allowLMR nodesParsed
-        | alpha > beta = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed)
+        | alpha >= beta = (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed)
 
           -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
           -- evaluate with reduced depth (LMR).
@@ -244,7 +244,13 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
        in newCandidatesList
     -}
 
-    candidates = sortCandidates unsortedCandidates (turn board)
+    candidates = 
+      let newCandidatesList = case firstChoice of
+            [] -> sortCandidates unsortedCandidates (turn board)
+            (m : _) -> case partition (\c -> m == (fst c)) unsortedCandidates of
+              ([], _) -> sortCandidates unsortedCandidates (turn board)
+              ((candidate : _), others) -> candidate : (sortCandidates others (turn board))
+       in newCandidatesList
 
     sortCandidates lst player =
         let extractValue board = do
