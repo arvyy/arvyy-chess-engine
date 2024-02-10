@@ -55,8 +55,10 @@ unitTests = testGroup "Unit tests"
       parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
       parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (Move 5 2 5 4 Nothing))
   , testCase "Candidates moves" $ do
-      -- test en pessant
+      -- test en pessant works
       candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (Move 5 5 4 6 Nothing) @?= True
+      -- regression test, king trying to capture protected pieces
+      candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (Move 5 3 6 3 Nothing) @?= False
   ]
 
 

@@ -655,7 +655,7 @@ candidateMoves board =
       validCandidates = do
         candidate <- candidates
         let board' = applyMoveUnsafe board candidate
-        let inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate)) && playerInCheck board' player
+        let inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck board' player
         if not inCheck then [(candidate, board')] else []
    in validCandidates
   where
@@ -667,6 +667,8 @@ candidateMoves board =
         fromRow == king_y ||
         fromCol == king_x ||
         abs (fromRow - king_y) == abs (fromCol - king_x)
+    isKingMove Move{ fromCol, fromRow } = 
+        fromRow == king_y && fromCol == king_x
 
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
