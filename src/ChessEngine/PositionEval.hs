@@ -10,6 +10,7 @@ module ChessEngine.PositionEval
 where
 
 import ChessEngine.Board
+import ChessEngine.Heatmaps
 import qualified Data.HashMap.Strict as Map
 import Data.List (sortBy, partition)
 import Data.Maybe (fromJust)
@@ -61,12 +62,12 @@ finalDepthEval board =
     pieceMul color = if color == (turn board) then 1 else -1
 
     scorePiece :: (Int, Int, ChessPiece) -> Float
-    scorePiece (_, _, ChessPiece player King) = 0
-    scorePiece piece@(_, _, ChessPiece player Queen) = (9 + scorePieceThreats board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Pawn) = (1 + scorePieceThreats board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Queen) = (9 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Pawn) = (1 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
 
     scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
     scorePieceThreats board piece =
@@ -77,7 +78,26 @@ finalDepthEval board =
                 (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
                 (0.0, 0.0)
                 (pieceThreats board piece)
+            typeMultiplier = case piece of
+                    -- due to queen range, it needs reduced reward otherwise board is very eager to play with queen
+                    -- without developing other pieces
+                    (_, _, ChessPiece _ Queen) -> 0.1
+                    _ -> 1.0
         in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.5
+
+    scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+    scorePiecePosition board (x, y, piece@(ChessPiece _ pieceType)) =
+        let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
+            maxBonus = case pieceType of
+                Pawn -> 0.5
+                King -> 2.0
+                Bishop -> 1.5
+                Horse -> 1.5
+                Rock -> 1.0
+                Queen -> 0.0
+            score = (squareRating ** 1.8) * maxBonus
+        in score
+            
 
 
 
