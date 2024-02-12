@@ -79,11 +79,11 @@ finalDepthEval board =
                 (0.0, 0.0)
                 (pieceThreats board piece)
             typeMultiplier = case piece of
-                    -- due to queen range, it needs reduced reward otherwise board is very eager to play with queen
+                    -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
                     -- without developing other pieces
                     (_, _, ChessPiece _ Queen) -> 0.1
                     _ -> 1.0
-        in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.5
+        in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.3
 
     scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
     scorePiecePosition board (x, y, piece@(ChessPiece _ pieceType)) =
@@ -204,8 +204,8 @@ evaluate'' params@EvaluateParams {cache, moves, firstChoice, alpha, beta, depth,
               (moveValue, _, _) = case evaluate' params' of ((v, moves), cache, nodes) -> ((negateEval v, moves), cache, nodes)
           in
             if (fst moveValue) > beta
-            -- passing up move still causes it to exceed beta -- cut off (will yield on next iteration call on alpha >= beta check)
-            then (bestMoveValue, putValue cache board depth (fst bestMoveValue), nodesParsed)
+            -- passing up move still causes it to exceed beta -- cut off
+            then ((beta, moves ++ [candidateMove]), putValue cache board depth beta, nodesParsed)
             else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) nodesParsed)
           
           -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
@@ -328,8 +328,12 @@ evaluateIteration cache board lastDepthBest depth =
   in evaluate' params --(trace (show params) params)
 
 evaluate :: ChessBoard -> Int -> EvaluateResult
-evaluate board finalDepth =
+evaluate board targetDepth =
   let
+    candidateCount = length $ candidateMoves board
+    finalDepth = if candidateCount >= 20
+                 then targetDepth
+                 else targetDepth + 1
     (_, (eval, moves), _, nodesParsed) = iterate computeNext firstEvaluation !! (finalDepth - startingDepth)
     evalTransformation = if (turn board) == White then id else negateEval
     result =

@@ -2,6 +2,7 @@ module ChessEngine.UCI
   ( GoProps (..),
     UCICommand (..),
     parseUCICommand,
+    emptyGoProps
   )
 where
 
@@ -11,6 +12,7 @@ import Control.Monad
 import Data.List
 import Debug.Trace
 import Text.Regex.PCRE
+import Text.Read (readMaybe)
 
 data GoProps = GoProps
   { searchMoves :: ![Move],
@@ -27,6 +29,21 @@ data GoProps = GoProps
     infinite :: !Bool
   }
   deriving (Eq, Show)
+
+emptyGoProps :: GoProps
+emptyGoProps = GoProps { searchMoves = [],
+  ponder = False,
+  whiteTime = Nothing,
+  blackTime = Nothing,
+  whiteIncrement = Nothing,
+  blackIncrement = Nothing,
+  movesToGo = Nothing,
+  depth = Nothing,
+  nodes = Nothing,
+  mate = Nothing,
+  moveTime = Nothing,
+  infinite = False
+}
 
 data UCICommand
   = UCI
@@ -59,24 +76,24 @@ parseUCICommand input
         then do
           props <-
             tryParseGoParts
-              (drop 2 input)
-              GoProps
-                { searchMoves = [],
-                  ponder = False,
-                  whiteTime = Nothing,
-                  blackTime = Nothing,
-                  whiteIncrement = Nothing,
-                  blackIncrement = Nothing,
-                  movesToGo = Nothing,
-                  depth = Just 5,
-                  nodes = Nothing,
-                  mate = Nothing,
-                  moveTime = Nothing,
-                  infinite = False
-                }
+              (drop 3 input)
+              emptyGoProps
           return $ Go props
         else Nothing
-    tryParseGoParts input props = Just props -- TODO
+
+    tryParseGoParts input props = tryParseGoParts' (words input) props
+
+    tryParseGoParts' ("depth":depthStr:rest) props = do
+        depth <- readMaybe depthStr
+        let props' = props { depth = Just depth }
+        tryParseGoParts' rest props'
+
+    -- skip unrecognized values
+    tryParseGoParts' (key:value:rest) props =
+        tryParseGoParts' rest props
+        
+    tryParseGoParts' [] props = Just props
+
     tryParsePosition =
         let posWithMoves = case (input =~ "^position (.+) moves ?(.*)$") :: (AllSubmatches [] (Int, Int)) of
                                 (AllSubmatches (all : positionStr : moveStrs : [])) -> Just (positionStr, moveStrs)

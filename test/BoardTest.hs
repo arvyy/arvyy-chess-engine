@@ -54,6 +54,7 @@ unitTests = testGroup "Unit tests"
       parseUCICommand "position startpos" @?= Just (Position initialBoard)
       parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
       parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (Move 5 2 5 4 Nothing))
+      parseUCICommand "go depth 6" @?= Just (Go emptyGoProps{ depth = Just 6 })
   , testCase "Candidates moves" $ do
       -- test en pessant works
       candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (Move 5 5 4 6 Nothing) @?= True
