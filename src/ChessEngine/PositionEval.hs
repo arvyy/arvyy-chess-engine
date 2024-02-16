@@ -53,6 +53,11 @@ getCandidates (ChessCache _ candidates) board = Map.lookup board candidates
 create :: ChessCache
 create = ChessCache Map.empty Map.empty
 
+cacheSize (ChessCache table candidates) =
+    let s1 = Map.size table
+        s2 = Map.size candidates
+    in "Transposition size: " ++ (show s1) ++ ", candidates " ++ (show s2)
+
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval :: ChessBoard -> PositionEval
 finalDepthEval board =
@@ -313,7 +318,7 @@ evaluateIteration cache board lastDepthBest depth =
   let (lastEval, firstChoice) = lastDepthBest
       params =
         EvaluateParams
-          { cache = cache,
+          { cache = (trace (cacheSize cache) cache),
             moves = [],
             firstChoice = firstChoice,
             alpha = PositionEval $ (-1) / 0,
