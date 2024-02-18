@@ -58,8 +58,8 @@ getCandidates (ChessCache _ candidates) board = Map.lookup candidates board
 
 create :: ST s (ChessCache s)
 create = do
-    table <- Map.newSized 100000
-    candidates <- Map.newSized 100000
+    table <- Map.new
+    candidates <- Map.new
     return (ChessCache table candidates)
 
 cloneCache :: ChessCache s -> ST s (ChessCache s)
@@ -76,12 +76,6 @@ cacheSize (ChessCache table candidates) = do
     return $ "Transposition size: " ++ (show size1) ++ ", candidates size: " ++ (show size2)
 -}
 cacheSize _ = return ""
-
-
-cacheSize (ChessCache table candidates) =
-    let s1 = Map.size table
-        s2 = Map.size candidates
-    in "Transposition size: " ++ (show s1) ++ ", candidates " ++ (show s2)
 
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval :: ChessBoard -> PositionEval
