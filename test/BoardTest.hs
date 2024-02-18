@@ -60,6 +60,8 @@ unitTests = testGroup "Unit tests"
       candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (Move 5 5 4 6 Nothing) @?= True
       -- regression test, king trying to capture protected pieces
       candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (Move 5 3 6 3 Nothing) @?= False
+      -- regression test, check if it knows how to promote with capture
+      candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (Move 4 7 3 8 (Just PromoQueen)) @?= True
   ]
 
 

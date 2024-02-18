@@ -7,6 +7,7 @@ module ChessEngine.Board
     PlayerColor (..),
     ChessPiece (..),
     Move (..),
+    PromoChessPieceType (..),
     ChessBoard (..),
     ChessBoardPositions (..),
     boardPositions,
@@ -544,7 +545,11 @@ pawnCandidateMoves board x y player =
         x' <- case pieceOnSquare board x' y' of
           Just (ChessPiece color _) -> if color /= player then [x'] else []
           _ -> []
-        return (Move x y x' y' Nothing)
+        if promotesOnMove
+        then do
+            promotion <- [PromoHorse, PromoRock, PromoQueen, PromoBishop, PromoHorse]
+            return (Move x y x' y' $ Just promotion)
+        else return (Move x y x' y' Nothing)
       enPassantCaptures = do
         x' <- [x - 1, x + 1]
         x' <- if not (inBounds x' y') then [] else [x']
