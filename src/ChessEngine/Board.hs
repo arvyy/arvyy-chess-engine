@@ -93,11 +93,13 @@ bitIndexToCoords index =
         y' = div index 8
     in (x' + 1, y' + 1)
 
+{-# INLINE coordsToBitIndex #-}
 coordsToBitIndex :: Int -> Int -> Int
 coordsToBitIndex x y =
   let value = (y - 1) * 8 + x - 1
    in if value > 63 then error ("Coordinate out of bounds: " ++ (show (x, y))) else value
 
+{-# INLINE clearPosition #-}
 clearPosition :: ChessBoardPositions -> Int -> Int -> ChessBoardPositions
 clearPosition (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y =
   ChessBoardPositions
@@ -113,6 +115,7 @@ clearPosition (ChessBoardPositions black white bishops horses queens kings pawns
   where
     bit = coordsToBitIndex x y
 
+{-# INLINE setPosition #-}
 setPosition :: ChessBoardPositions -> Int -> Int -> ChessPiece -> ChessBoardPositions
 setPosition positions x y (ChessPiece color pieceType) =
   let (ChessBoardPositions black white bishops horses queens kings pawns rocks) = clearPosition positions x y

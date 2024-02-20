@@ -98,7 +98,7 @@ finalDepthEval board =
             typeMultiplier = case piece of
                     -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
                     -- without developing other pieces
-                    (_, _, ChessPiece _ Queen) -> 0.1
+                    (_, _, ChessPiece _ Queen) -> 0.6
                     _ -> 1.0
         in (log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.25) * typeMultiplier
 
