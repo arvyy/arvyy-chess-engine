@@ -49,13 +49,6 @@ putValue cache@(ChessCache table candidates) board depth value = do
 getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
 getValue (ChessCache table _) board = Map.lookup table board
 
-putCandidates :: ChessCache s -> ChessBoard -> [(Move, ChessBoard)] -> ST s ()
-putCandidates cache@(ChessCache table candidates) board moves =
-    Map.insert candidates board moves
-
-getCandidates :: ChessCache s -> ChessBoard -> ST s (Maybe [(Move, ChessBoard)])
-getCandidates (ChessCache _ candidates) board = Map.lookup candidates board
-
 create :: ST s (ChessCache s)
 create = do
     table <- Map.new
@@ -107,7 +100,7 @@ finalDepthEval board =
                     -- without developing other pieces
                     (_, _, ChessPiece _ Queen) -> 0.1
                     _ -> 1.0
-        in log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.25
+        in (log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.25) * typeMultiplier
 
     scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
     scorePiecePosition board (x, y, piece@(ChessPiece _ pieceType)) =
@@ -159,17 +152,10 @@ evaluate' cache params@EvaluateParams { moves, board, depth = depth', nodesParse
     let depth = max depth' 0
     tableHit <- getValue cache board
     let doSearch = do
-            existingCandidates <- getCandidates cache board
-            candidates <- case existingCandidates of
-                                            Just moves -> return moves
-                                            Nothing -> do
-                                                let candidates' = candidateMoves board
-                                                putCandidates cache board candidates'
-                                                return candidates'
-            sortedCandidates <- sortCandidates cache candidates (turn board)
+            sortedCandidates <- sortCandidates cache (candidateMoves board) (turn board)
             ((eval', moves'), nodes) <- evaluate'' cache params sortedCandidates
             when allowCaching $ putValue cache board depth eval'
-            return ((eval', moves'), nodes)
+            return ((eval', moves'), if allowCaching then nodes + 1 else nodes)
     case tableHit of
         Just (TranspositionValue eval cachedDepth) ->
             if cachedDepth >= depth
@@ -229,15 +215,11 @@ foldHorizonEval _ [] alpha _ = alpha
 evaluate'' :: ChessCache s -> EvaluateParams -> [(Move, ChessBoard)] -> ST s ((PositionEval, [Move]), Int)
 evaluate'' cache params@EvaluateParams { moves, firstChoice, alpha, beta, depth, maxDepth, board, nodesParsed, allowNullMove} candidates'
   | null candidates =
-      let
-        !eval = outOfMovesEval board
-        !nodesParsed' = nodesParsed + 1
-      in return ((eval, moves), nodesParsed')
+      let eval = outOfMovesEval board
+      in return ((eval, moves), nodesParsed)
   | depth <= 0 =
-      let
-        !eval =  horizonEval 3 board alpha beta
-        !nodesParsed' = nodesParsed + 1
-      in return ((eval, moves), nodesParsed')
+      let eval =  horizonEval 3 board alpha beta
+      in return ((eval, moves), nodesParsed)
   | otherwise = foldCandidates cache candidates alpha beta
   where
 
@@ -281,7 +263,8 @@ evaluate'' cache params@EvaluateParams { moves, firstChoice, alpha, beta, depth,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
-                    beta = negateEval alpha }
+                    beta = negateEval alpha,
+                    allowCaching = False }
               evaluated' <- evaluate' cache params'
               let (moveValue, newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, moves), nodes)
               if (fst moveValue) > (fst bestMoveValue)
@@ -326,7 +309,7 @@ evaluate'' cache params@EvaluateParams { moves, firstChoice, alpha, beta, depth,
                   newAlpha = max alpha (fst newBestMoveValue)
               foldCandidates' cache False newBestMoveValue restCandidates newAlpha beta (siblingIndex + 1) (False, False, False) newNodesParsed
 
-    foldCandidates' cache _ bestMoveValue [] _ _ _ _ nodesParsed = return (bestMoveValue, nodesParsed + 1)
+    foldCandidates' cache _ bestMoveValue [] _ _ _ _ nodesParsed = return (bestMoveValue, nodesParsed)
 
     candidates =
       let newCandidatesList = case firstChoice of
