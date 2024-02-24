@@ -39,6 +39,6 @@ main = defaultMain [
     ],
   bgroup "move generator"
     [
-      bench "Initial pos 4 deep" $ whnf (countNodes "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 4
+      bench "Initial pos 5 deep" $ whnf (countNodes "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 5
     ]
     ]

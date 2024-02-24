@@ -12,8 +12,8 @@ where
 
 import ChessEngine.Board
 import ChessEngine.Heatmaps
--- import qualified Data.HashTable.ST.Cuckoo as Map
 import qualified Data.HashTable.ST.Basic as Map
+import Data.Int (Int64)
 import Data.List (sortBy, partition)
 import Data.Maybe (fromJust)
 import Data.Foldable
@@ -25,56 +25,108 @@ import Control.Monad
 newtype PositionEval = PositionEval Float
     deriving (Eq, Show, Ord)
 
+negateEval :: PositionEval -> PositionEval
 negateEval (PositionEval v) = PositionEval (- v)
 
 data TranspositionValue = TranspositionValue PositionEval Int deriving Show
 
 type TranspositionTable s = Map.HashTable s ChessBoard TranspositionValue
 
-type CandidateMoveTable s = Map.HashTable s ChessBoard [(Move, ChessBoard)]
+type PawnTable s = Map.HashTable s Int64 Float
 
-data ChessCache s = ChessCache (TranspositionTable s) (CandidateMoveTable s)
+data ChessCache s = ChessCache (TranspositionTable s) (PawnTable s)
 
 putValue :: ChessCache s -> ChessBoard -> Int -> PositionEval -> ST s ()
-putValue cache@(ChessCache table candidates) board depth value = do
+putValue (ChessCache table _) board depth value = do
     existingValue <- Map.lookup table board
     case existingValue of
-        Just (TranspositionValue eval prevDepth) ->
-            if (depth > prevDepth)
-            then Map.insert table board (TranspositionValue value depth)
-            else return ()
+        Just (TranspositionValue _ prevDepth) ->
+            when (depth > prevDepth) $ Map.insert table board (TranspositionValue value depth)
         Nothing -> Map.insert table board (TranspositionValue value depth)
 
 
 getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
 getValue (ChessCache table _) board = Map.lookup table board
 
+putPawnEvaluation :: ChessCache s -> Int64 -> Float -> ST s ()
+putPawnEvaluation (ChessCache _ pawns) pawnPosition value = Map.insert pawns pawnPosition value
+
+getPawnEvaluation :: ChessCache s -> Int64 -> ST s (Maybe Float)
+getPawnEvaluation (ChessCache _ pawns) position = Map.lookup pawns position
+
 create :: ST s (ChessCache s)
 create = do
     table <- Map.new
-    candidates <- Map.new
-    return (ChessCache table candidates)
+    pawns <- Map.new
+    return (ChessCache table pawns)
 
-cloneCache :: ChessCache s -> ST s (ChessCache s)
-cloneCache (ChessCache table candidates) = do
-    table' <- Map.new
-    Map.mapM_ (\(k, v) -> Map.insert table' k v) table
-    return $ ChessCache table' candidates
+evaluatePawns :: ChessCache s -> ChessBoard -> ST s Float
+evaluatePawns cache board = do
+    let key = pawns $ pieces board
+    pawnEvaluation <- getPawnEvaluation cache key
+    case pawnEvaluation of
+        Just v -> return v
+        Nothing -> do
+            let pawnEvaluation' = doEvaluatePawns $ boardPawnPositions board
+            putPawnEvaluation cache key pawnEvaluation'
+            return pawnEvaluation'
+    where
+        doEvaluatePawns :: [(Int, Int, ChessPiece)] -> Float
+        doEvaluatePawns ((x, y, ChessPiece color _):rest) =
+            let score = 1 + 
+                    (if isPassedPawn x y color then 0.4 else 0) + 
+                    (if isBackwardDoubledPawn x y color then (-0.3) else 0) +
+                    (if isProtectedPawn x y color then 0.1 else 0) +
+                    (piecePositionBonus x y (ChessPiece color Pawn) * 0.2) +
+                    0
+                multiplier = if color == White then 1 else -1
+            in (score * multiplier) + doEvaluatePawns rest
+        doEvaluatePawns [] = 0.0
 
-{-
-cacheSize :: ChessCache s -> ST s String
-cacheSize (ChessCache table candidates) = do
-    size1 <- Map.size table
-    size2 <- Map.size candidates
-    return $ "Transposition size: " ++ (show size1) ++ ", candidates size: " ++ (show size2)
--}
-cacheSize _ = return ""
+        isPassedPawn x y White = null $ do
+            x' <- [x - 1 .. x + 1]
+            y' <- [y + 1 .. 7]
+            case pieceOnSquare board x' y' of
+                Just (ChessPiece Black Pawn) -> [False]
+                _ -> []
+        isPassedPawn x y Black = null $ do
+            x' <- [x - 1 .. x + 1]
+            y' <- [y - 1 .. 2]
+            case pieceOnSquare board x' y' of
+                Just (ChessPiece White Pawn) -> [False]
+                _ -> []
+
+        isBackwardDoubledPawn x y White = not $ null $ do
+            y' <- [y + 1 .. 7]
+            case pieceOnSquare board x y' of
+                Just (ChessPiece White Pawn) -> [False]
+                _ -> []
+        isBackwardDoubledPawn x y Black = not $ null $ do
+            y' <- [y - 1 .. 2]
+            case pieceOnSquare board x y' of
+                Just (ChessPiece Black Pawn) -> [False]
+                _ -> []
+
+        isProtectedPawn x y White = not $ null $ do
+            x' <- [x - 1, x + 1]
+            let y' = y - 1
+            case pieceOnSquare board x' y' of
+                Just (ChessPiece White Pawn) -> [False]
+                _ -> []
+        isProtectedPawn x y Black = not $ null $ do
+            x' <- [x - 1, x + 1]
+            let y' = y + 1
+            case pieceOnSquare board x' y' of
+                Just (ChessPiece Black Pawn) -> [False]
+                _ -> []
+    
 
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
-finalDepthEval :: ChessBoard -> PositionEval
-finalDepthEval board =
-    let score = foldl' (\score piece -> score + scorePiece piece) 0 $ boardPositions board
-    in PositionEval score
+finalDepthEval :: ChessCache s -> ChessBoard -> ST s PositionEval
+finalDepthEval cache board = do
+    let score = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
+    pawnScore <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
+    return $ PositionEval (score + pawnScore)
   where
     pieceMul color = if color == (turn board) then 1 else -1
 
@@ -84,7 +136,6 @@ finalDepthEval board =
     scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Pawn) = (1 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
 
     scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
     scorePieceThreats board piece =
@@ -98,19 +149,19 @@ finalDepthEval board =
             typeMultiplier = case piece of
                     -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
                     -- without developing other pieces
-                    (_, _, ChessPiece _ Queen) -> 0.6
+                    (_, _, ChessPiece _ Queen) -> 0.5
                     _ -> 1.0
-        in (log (ownSide + 1.0) * 0.2 + log (opponentSide + 1.0) * 0.25) * typeMultiplier
+        in (log (ownSide + 1.0) * 0.1 + log (opponentSide + 1.0) * 0.11) * typeMultiplier
 
     scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
     scorePiecePosition board (x, y, piece@(ChessPiece _ pieceType)) =
         let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
             maxBonus = case pieceType of
-                Pawn -> 0.5
-                King -> 2.0
-                Bishop -> 1.5
-                Horse -> 1.5
-                Rock -> 1.0
+                Pawn -> 0.2
+                King -> 1
+                Bishop -> 0.5
+                Horse -> 0.5
+                Rock -> 0.2
                 Queen -> 0.0
             score = (squareRating ** 1.8) * maxBonus
         in score
@@ -191,25 +242,26 @@ sortCandidates cache lst player = do
         removeScore (move, board, _) = (move, board)
 
 
-horizonEval :: Int -> ChessBoard -> PositionEval -> PositionEval -> PositionEval
-horizonEval depth board alpha beta
-    | depth <= 0 = finalDepthEval board
-    | otherwise =
-        let pat = finalDepthEval board
-            alpha' = max alpha pat
-            capturingMoves = (filter (\(move, _) -> isCaptureMove board move) (candidateMoves board))
-        in if pat >= beta
-           then beta
-           else foldHorizonEval depth capturingMoves alpha' beta
+horizonEval :: ChessCache s -> Int -> ChessBoard -> PositionEval -> PositionEval -> ST s PositionEval
+horizonEval cache depth board alpha beta
+    | depth <= 0 = finalDepthEval cache board
+    | otherwise = do
+        pat <- finalDepthEval cache board
+        let alpha' = max alpha pat
+        let capturingMoves = (filter (\(move, _) -> isCaptureMove board move) (candidateMoves board))
+        if pat >= beta
+        then return beta
+        else foldHorizonEval cache depth capturingMoves alpha' beta
 
-foldHorizonEval :: Int -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> PositionEval
-foldHorizonEval depth ((_, board'):rest) alpha beta =
-    let value = negateEval (horizonEval (depth - 1) board' (negateEval beta) (negateEval alpha))
-        alpha' = max alpha value
-    in if value >= beta
-       then beta
-       else foldHorizonEval depth rest alpha' beta
-foldHorizonEval _ [] alpha _ = alpha
+foldHorizonEval :: ChessCache s -> Int -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ST s PositionEval
+foldHorizonEval cache depth ((_, board'):rest) alpha beta = do
+       value <-  negateEval <$> horizonEval cache (depth - 1) board' (negateEval beta) (negateEval alpha)
+       let alpha' = max alpha value
+       if value >= beta
+       then return beta
+       else foldHorizonEval cache depth rest alpha' beta
+
+foldHorizonEval _ _ [] alpha _ = return alpha
 
 
 evaluate'' :: ChessCache s -> EvaluateParams -> [(Move, ChessBoard)] -> ST s ((PositionEval, [Move]), Int)
@@ -217,9 +269,9 @@ evaluate'' cache params@EvaluateParams { moves, firstChoice, alpha, beta, depth,
   | null candidates =
       let eval = outOfMovesEval board
       in return ((eval, moves), nodesParsed)
-  | depth <= 0 =
-      let eval =  horizonEval 3 board alpha beta
-      in return ((eval, moves), nodesParsed)
+  | depth <= 0 = do
+      eval <- horizonEval cache 10 board alpha beta
+      return ((eval, moves), nodesParsed)
   | otherwise = foldCandidates cache candidates alpha beta
   where
 
@@ -356,12 +408,8 @@ iterateM' f mx n = do
 evaluate :: ChessBoard -> Int -> EvaluateResult
 evaluate board targetDepth =
   let
-    candidateCount = length $ candidateMoves board
-    finalDepth = if candidateCount >= 20
-                 then targetDepth
-                 else targetDepth + 1
     (eval, moves, nodesParsed) = runST $ do
-        (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (finalDepth - startingDepth)
+        (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
         return (eval, moves, nodesParsed)
     evalTransformation = if (turn board) == White then id else negateEval
     result =
@@ -379,7 +427,7 @@ evaluate board targetDepth =
         let (depth, lastDepthBest, cache, _) = current
         (thisDepthBest, nodesParsed) <- evaluateIteration cache board lastDepthBest (depth + 1)
         return (depth + 1, thisDepthBest, cache, nodesParsed)
-    startingDepth = 2
+    startingDepth = 1
     firstEvaluation :: ST s (Int, (PositionEval, [Move]), ChessCache s, Int)
     firstEvaluation = do
         cache <- create

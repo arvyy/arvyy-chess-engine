@@ -11,6 +11,8 @@ module ChessEngine.Board
     ChessBoard (..),
     ChessBoardPositions (..),
     boardPositions,
+    boardNonPawnPositions,
+    boardPawnPositions,
     pieceOnSquare,
     candidateMoves,
     initialBoard,
@@ -47,33 +49,35 @@ data ChessBoardPositions = ChessBoardPositions
   deriving (Eq, Ord, Generic)
 
 instance Show ChessBoardPositions where
-  show positions = show $ positionsToList positions
+  show positions = show $ positionsToList positions [Pawn, Bishop, Horse, Rock, Queen, King]
 
-positionsToList :: ChessBoardPositions -> [(Int, Int, ChessPiece)]
-positionsToList positions = do
-  x <- [1 .. 8]
-  y <- [1 .. 8]
-  piece <- case (pieceOnSquare' positions x y) of
-    Nothing -> []
-    Just p -> [p]
-  return (x, y, piece)
+positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
+positionsToList positions types =
+    playerPositionsToList positions White types ++ playerPositionsToList positions Black types
 
 -- returns list of positions for given player
-playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [(Int, Int, ChessPiece)]
-playerPositionsToList ChessBoardPositions{ black, white, bishops, horses, queens, kings, pawns, rocks } color =
-    collectValues Pawn pawns ++
-    collectValues Bishop bishops ++
-    collectValues Horse horses ++
-    collectValues Rock rocks ++
-    collectValues Queen queens ++
-    collectValues King kings
+-- playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [(Int, Int, ChessPiece)]
+-- playerPositionsToList board color = playerPositionsToList' board color [Pawn, Bishop, Horse, Rock, Queen, King]
+
+playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
+playerPositionsToList positions@ChessBoardPositions{ black, white, bishops, horses, queens, kings, pawns, rocks } color (t:rest) =
+    let bitmap = case t of
+                Pawn -> pawns
+                Bishop -> bishops
+                Horse -> horses
+                Rock -> rocks
+                Queen -> queens
+                King -> kings
+    in collectValues t bitmap ++ playerPositionsToList positions color rest
     where
         playerbitmap = if color == White then white else black
         collectValues pieceType bitmap = do
             let bitmap' = bitmap .&. playerbitmap
             (x, y) <- bitmapToCoords bitmap'
             return (x, y, ChessPiece color pieceType)
+playerPositionsToList _ _ [] = []
 
+{-# INLINE playerKingPosition #-}
 playerKingPosition :: ChessBoardPositions -> PlayerColor -> (Int, Int)
 playerKingPosition ChessBoardPositions{ black, white, kings } color =
     let bitmap = (if color == White then white else black) .&. kings
@@ -134,6 +138,7 @@ setPosition positions x y (ChessPiece color pieceType) =
 
 pieceOnSquare' :: ChessBoardPositions -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y = do
+  _ <- if inBounds x y then return True else Nothing
   color' <- color
   pieceType' <- pieceType
   return $ ChessPiece color' pieceType'
@@ -189,7 +194,13 @@ data Move = Move
   deriving (Show, Eq)
 
 boardPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
-boardPositions ChessBoard {pieces = pieces} = positionsToList pieces
+boardPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn, Bishop, Horse, Rock, Queen, King]
+
+boardNonPawnPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
+boardNonPawnPositions ChessBoard {pieces = pieces} = positionsToList pieces [Bishop, Horse, Rock, Queen, King]
+
+boardPawnPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
+boardPawnPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn]
 
 parseSquareReference :: String -> Maybe (Int, Int)
 parseSquareReference (x : y : []) = do
@@ -526,6 +537,7 @@ playerPotentiallyPinned board player =
         rocks = findPiecePositions board (ChessPiece opponentColor Rock)
         bishops = findPiecePositions board (ChessPiece opponentColor Bishop)
 
+{-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> PlayerColor -> Bool
 playerInCheck board player =
     let (x, y) = playerKingPosition (pieces board) player
@@ -627,7 +639,7 @@ pieceCandidateMoves board piece =
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
   let player = turn board
-      playerPieces = playerPositionsToList (pieces board) player
+      playerPieces = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
       unsortedCandidatesWithCaptureInfo = concatMap pieceCandidatesWithCaptureInfo playerPieces
       (captures, nonCaptures) = partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
    in dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
