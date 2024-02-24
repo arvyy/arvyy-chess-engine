@@ -17,7 +17,8 @@ data EngineState = EngineState
     evalTimeLimit :: !(Maybe UTCTime),
     evalNodeLimit :: !(Maybe Int),
     result :: !(Maybe EvaluateResult)
-  } deriving Show
+  }
+  deriving (Show)
 
 blank :: EngineState
 blank = EngineState {board = Nothing, evalTimeLimit = Nothing, evalNodeLimit = Nothing, result = Nothing}
@@ -103,12 +104,12 @@ yieldThinkResult :: EngineState -> ([String], EngineState)
 yieldThinkResult state = (infoCp ++ infoNodes ++ bestMove, blank)
   where
     EngineState {result = Just evalResult} = state
-    EvaluateResult {moves = moves, evaluation = (PositionEval value), nodesParsed = nodesParsed } = evalResult
+    EvaluateResult {moves = moves, evaluation = (PositionEval value), nodesParsed = nodesParsed} = evalResult
     infoCp = ["info cp " ++ show (floor (value * 100))]
     infoNodes = ["info nodes " ++ show nodesParsed]
     bestMove = case moves of
       [] -> []
       (m : _) -> case moveToString m of
-        Just str -> 
-            [ "bestmove " ++ str ]
+        Just str ->
+          ["bestmove " ++ str]
         Nothing -> []

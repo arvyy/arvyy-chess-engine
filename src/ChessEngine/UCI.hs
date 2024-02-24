@@ -2,7 +2,7 @@ module ChessEngine.UCI
   ( GoProps (..),
     UCICommand (..),
     parseUCICommand,
-    emptyGoProps
+    emptyGoProps,
   )
 where
 
@@ -11,8 +11,8 @@ import Control.Applicative
 import Control.Monad
 import Data.List
 import Debug.Trace
-import Text.Regex.PCRE
 import Text.Read (readMaybe)
+import Text.Regex.PCRE
 
 data GoProps = GoProps
   { searchMoves :: ![Move],
@@ -31,19 +31,21 @@ data GoProps = GoProps
   deriving (Eq, Show)
 
 emptyGoProps :: GoProps
-emptyGoProps = GoProps { searchMoves = [],
-  ponder = False,
-  whiteTime = Nothing,
-  blackTime = Nothing,
-  whiteIncrement = Nothing,
-  blackIncrement = Nothing,
-  movesToGo = Nothing,
-  depth = Nothing,
-  nodes = Nothing,
-  mate = Nothing,
-  moveTime = Nothing,
-  infinite = False
-}
+emptyGoProps =
+  GoProps
+    { searchMoves = [],
+      ponder = False,
+      whiteTime = Nothing,
+      blackTime = Nothing,
+      whiteIncrement = Nothing,
+      blackIncrement = Nothing,
+      movesToGo = Nothing,
+      depth = Nothing,
+      nodes = Nothing,
+      mate = Nothing,
+      moveTime = Nothing,
+      infinite = False
+    }
 
 data UCICommand
   = UCI
@@ -83,25 +85,24 @@ parseUCICommand input
 
     tryParseGoParts input props = tryParseGoParts' (words input) props
 
-    tryParseGoParts' ("depth":depthStr:rest) props = do
-        depth <- readMaybe depthStr
-        let props' = props { depth = Just depth }
-        tryParseGoParts' rest props'
+    tryParseGoParts' ("depth" : depthStr : rest) props = do
+      depth <- readMaybe depthStr
+      let props' = props {depth = Just depth}
+      tryParseGoParts' rest props'
 
     -- skip unrecognized values
-    tryParseGoParts' (key:value:rest) props =
-        tryParseGoParts' rest props
-        
+    tryParseGoParts' (key : value : rest) props =
+      tryParseGoParts' rest props
     tryParseGoParts' [] props = Just props
 
     tryParsePosition =
-        let posWithMoves = case (input =~ "^position (.+) moves ?(.*)$") :: (AllSubmatches [] (Int, Int)) of
-                                (AllSubmatches (all : positionStr : moveStrs : [])) -> Just (positionStr, moveStrs)
-                                _ -> Nothing
-            posWithoutMoves = case (input =~ "^position (.+)$") :: (AllSubmatches [] (Int, Int)) of
-                                (AllSubmatches (all : positionStr : [])) -> Just (positionStr, (0, 0))
-                                _ -> Nothing
-        in do
+      let posWithMoves = case (input =~ "^position (.+) moves ?(.*)$") :: (AllSubmatches [] (Int, Int)) of
+            (AllSubmatches (all : positionStr : moveStrs : [])) -> Just (positionStr, moveStrs)
+            _ -> Nothing
+          posWithoutMoves = case (input =~ "^position (.+)$") :: (AllSubmatches [] (Int, Int)) of
+            (AllSubmatches (all : positionStr : [])) -> Just (positionStr, (0, 0))
+            _ -> Nothing
+       in do
             pos <- posWithMoves <|> posWithoutMoves
             tryParsePosition' pos
 

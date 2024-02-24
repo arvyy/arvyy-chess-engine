@@ -1,8 +1,7 @@
-module ChessEngine.Heatmaps
-    ( piecePositionBonus ) where
+module ChessEngine.Heatmaps (piecePositionBonus) where
 
-import Data.Array
 import ChessEngine.Board
+import Data.Array
 import Debug.Trace
 
 -- This module embeds heatmap info (heuristic for rewarding pieces for positioning on "good" squares)
@@ -14,33 +13,36 @@ import Debug.Trace
 floatify :: Int -> Float
 floatify n = fromIntegral n / 255.0
 
-horse_array = array (0, 63) $ zip [0..63] $ map floatify horse_heatmap_indexes
-bishop_array = array (0, 63) $ zip [0..63] $ map floatify bishop_heatmap_indexes
-pawn_array = array (0, 63) $ zip [0..63] $ map floatify pawn_heatmap_indexes
-king_array = array (0, 63) $ zip [0..63] $ map floatify king_heatmap_indexes
-rock_array = array (0, 63) $ zip [0..63] $ map floatify rock_heatmap_indexes
+horse_array = array (0, 63) $ zip [0 .. 63] $ map floatify horse_heatmap_indexes
+
+bishop_array = array (0, 63) $ zip [0 .. 63] $ map floatify bishop_heatmap_indexes
+
+pawn_array = array (0, 63) $ zip [0 .. 63] $ map floatify pawn_heatmap_indexes
+
+king_array = array (0, 63) $ zip [0 .. 63] $ map floatify king_heatmap_indexes
+
+rock_array = array (0, 63) $ zip [0 .. 63] $ map floatify rock_heatmap_indexes
 
 piecePositionBonus :: Int -> Int -> ChessPiece -> Float
 piecePositionBonus _ _ (ChessPiece _ Queen) = 0.0
 piecePositionBonus x y (ChessPiece player pieceType) =
-    -- since images produce inverted coordinate space, the "default" player ends up being black
-    let y' = (if player == Black then y else 9 - y) - 1
-        x' = x - 1
-        arr = case pieceType of
-                Horse -> horse_array
-                Bishop -> bishop_array
-                Pawn -> pawn_array
-                King -> king_array
-                Rock -> rock_array
-        index = y' * 8 + x'
-    in arr ! index
+  -- since images produce inverted coordinate space, the "default" player ends up being black
+  let y' = (if player == Black then y else 9 - y) - 1
+      x' = x - 1
+      arr = case pieceType of
+        Horse -> horse_array
+        Bishop -> bishop_array
+        Pawn -> pawn_array
+        King -> king_array
+        Rock -> rock_array
+      index = y' * 8 + x'
+   in arr ! index
 
 -------------------
 -- Generated heatmap tables
 
-
-bishop_heatmap_indexes = [
-    136,
+bishop_heatmap_indexes =
+  [ 136,
     136,
     136,
     136,
@@ -104,12 +106,10 @@ bishop_heatmap_indexes = [
     0,
     68,
     68
-    ]
+  ]
 
-
-
-king_heatmap_indexes = [
-    68,
+king_heatmap_indexes =
+  [ 68,
     68,
     68,
     68,
@@ -173,12 +173,10 @@ king_heatmap_indexes = [
     136,
     255,
     136
-    ]
+  ]
 
-
-
-horse_heatmap_indexes = [
-    0,
+horse_heatmap_indexes =
+  [ 0,
     0,
     68,
     0,
@@ -242,12 +240,10 @@ horse_heatmap_indexes = [
     68,
     0,
     0
-    ]
+  ]
 
-
-
-rock_heatmap_indexes = [
-    255,
+rock_heatmap_indexes =
+  [ 255,
     255,
     255,
     255,
@@ -311,12 +307,10 @@ rock_heatmap_indexes = [
     255,
     204,
     204
-    ]
+  ]
 
-
-
-pawn_heatmap_indexes = [
-    255,
+pawn_heatmap_indexes =
+  [ 255,
     255,
     255,
     255,
@@ -380,7 +374,4 @@ pawn_heatmap_indexes = [
     0,
     0,
     0
-    ]
-
-
-
+  ]
