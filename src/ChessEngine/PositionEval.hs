@@ -76,7 +76,7 @@ evaluatePawns cache board = do
             1
               + (if isPassedPawn x y color then 0.4 else 0)
               + (if isBackwardDoubledPawn x y color then (-0.3) else 0)
-              + (if isProtectedPawn x y color then 0.1 else 0)
+              + (if isProtectedPawn x y color then 0.05 else 0)
               + (piecePositionBonus x y (ChessPiece color Pawn) * 0.2)
               + 0
           multiplier = if color == White then 1 else -1

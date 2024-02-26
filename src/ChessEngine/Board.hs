@@ -525,18 +525,30 @@ squareUnderThreat board player x y =
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
-  hasPieceOnFileOrRank queens
-    || hasPieceOnDiagonal queens
-    || hasPieceOnDiagonal bishops
-    || hasPieceOnFileOrRank rocks
+  checkRayPin (x - 1) (y - 1) (-1) (-1) False [Queen, Bishop] ||
+  checkRayPin (x + 1) (y - 1) (1) (-1) False [Queen, Bishop] ||
+  checkRayPin (x - 1) (y + 1) (-1) (1) False [Queen, Bishop] ||
+  checkRayPin (x + 1) (y + 1) (1) (1) False [Queen, Bishop] ||
+  checkRayPin (x + 1) y (1) (0) False [Queen, Rock] ||
+  checkRayPin x (y + 1) (0) (1) False [Queen, Rock] ||
+  checkRayPin (x - 1) y (-1) (0) False [Queen, Rock] ||
+  checkRayPin x (y - 1) (0) (-1) False [Queen, Rock]
   where
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition (pieces board) player
-    hasPieceOnFileOrRank lst = any (\(x', y') -> (x == x') || (y == y')) lst
-    hasPieceOnDiagonal lst = any (\(x', y') -> abs (y - y') == abs (x - x')) lst
-    queens = findPiecePositions board (ChessPiece opponentColor Queen)
-    rocks = findPiecePositions board (ChessPiece opponentColor Rock)
-    bishops = findPiecePositions board (ChessPiece opponentColor Bishop)
+
+    checkRayPin :: Int -> Int -> Int -> Int -> Bool -> [ChessPieceType] -> Bool
+    checkRayPin x y dx dy ownPieceSeen pinnerTypes
+        | not $ inBounds x y = False
+        | otherwise =
+            case pieceOnSquare board x y of
+                Just (ChessPiece color pieceType) ->
+                    if ownPieceSeen && color == opponentColor && elem pieceType pinnerTypes then True
+                    else if ownPieceSeen then False
+                    else if color == opponentColor then False
+                    else checkRayPin (x + dx) (y + dy) dx dy True pinnerTypes
+                Nothing -> checkRayPin (x + dx) (y + dy) dx dy ownPieceSeen pinnerTypes
+            
 
 {-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> PlayerColor -> Bool
