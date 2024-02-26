@@ -91,7 +91,7 @@ evaluatePawns cache board = do
         _ -> []
     isPassedPawn x y Black = null $ do
       x' <- [x - 1 .. x + 1]
-      y' <- [y - 1 .. 2]
+      y' <- [2 .. y - 1]
       case pieceOnSquare board x' y' of
         Just (ChessPiece White Pawn) -> [False]
         _ -> []
@@ -102,7 +102,7 @@ evaluatePawns cache board = do
         Just (ChessPiece White Pawn) -> [False]
         _ -> []
     isBackwardDoubledPawn x y Black = not $ null $ do
-      y' <- [y - 1 .. 2]
+      y' <- [2 .. y - 1]
       case pieceOnSquare board x y' of
         Just (ChessPiece Black Pawn) -> [False]
         _ -> []

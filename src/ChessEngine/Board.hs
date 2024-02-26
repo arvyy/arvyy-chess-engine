@@ -445,20 +445,16 @@ pieceThreats board (x, y, ChessPiece color Horse) =
 
 pieceThreatsRay :: PlayerColor -> ChessBoard -> (Int, Int) -> (Int, Int) -> [(Int, Int)]
 pieceThreatsRay color board (x, y) (dx, dy) =
-  let maxLengthX =
-        if dx == 0
-        then 7
-        else if dx > 0
-             then 8 - x
-             else x - 1
-      maxLengthY =
-        if dy == 0
-        then 7
-        else if dy > 0
-             then 8 - y
-             else y - 1
+  let maxLengthX
+        | dx == 0 = 7
+        | dx > 0 = 8 - x
+        | otherwise = x - 1
+      maxLengthY
+        | dy == 0 = 7
+        | dy > 0 = 8 - y
+        | otherwise = y - 1
       !maxLength = min maxLengthX maxLengthY
-      offsetRange = if maxLength == 0 then [] else [1 .. maxLength]
+      offsetRange = [1 .. maxLength]
       squares = map (\i -> (x + i * dx, y + i * dy)) offsetRange
       squareAndPieceList :: [((Int, Int), Maybe ChessPiece)]
       squareAndPieceList = map (\square -> (square, pieceOnSquare board (fst square) (snd square))) squares
