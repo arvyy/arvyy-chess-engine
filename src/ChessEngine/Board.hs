@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -444,17 +445,27 @@ pieceThreats board (x, y, ChessPiece color Horse) =
 
 pieceThreatsRay :: PlayerColor -> ChessBoard -> (Int, Int) -> (Int, Int) -> [(Int, Int)]
 pieceThreatsRay color board (x, y) (dx, dy) =
-  let squares =
-        ( filter (\square -> inBounds (fst square) (snd square))
-            . map (\i -> (x + i * dx, y + i * dy))
-        )
-          [1 .. 7]
+  let maxLengthX =
+        if dx == 0
+        then 7
+        else if dx > 0
+             then 8 - x
+             else x - 1
+      maxLengthY =
+        if dy == 0
+        then 7
+        else if dy > 0
+             then 8 - y
+             else y - 1
+      !maxLength = min maxLengthX maxLengthY
+      offsetRange = if maxLength == 0 then [] else [1 .. maxLength]
+      squares = map (\i -> (x + i * dx, y + i * dy)) offsetRange
       squareAndPieceList :: [((Int, Int), Maybe ChessPiece)]
       squareAndPieceList = map (\square -> (square, pieceOnSquare board (fst square) (snd square))) squares
    in (filterUntilHit squareAndPieceList)
   where
     filterUntilHit :: [((Int, Int), Maybe ChessPiece)] -> [(Int, Int)]
-    filterUntilHit (((x, y), Nothing) : rest) = [(x, y)] ++ (filterUntilHit rest)
+    filterUntilHit (((x, y), Nothing) : rest) = (x, y) : (filterUntilHit rest)
     filterUntilHit (((x, y), Just (ChessPiece pieceColor _)) : rest) = if pieceColor == color then [] else [(x, y)]
     filterUntilHit [] = []
 
@@ -525,18 +536,8 @@ playerPotentiallyPinned board player =
   where
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition (pieces board) player
-    hasPieceOnFileOrRank lst =
-      not $
-        null $
-          filter
-            (\(x', y') -> (x == x') || (y == y'))
-            lst
-    hasPieceOnDiagonal lst =
-      not $
-        null $
-          filter
-            (\(x', y') -> abs (y - y') == abs (x - x'))
-            lst
+    hasPieceOnFileOrRank lst = any (\(x', y') -> (x == x') || (y == y')) lst
+    hasPieceOnDiagonal lst = any (\(x', y') -> abs (y - y') == abs (x - x')) lst
     queens = findPiecePositions board (ChessPiece opponentColor Queen)
     rocks = findPiecePositions board (ChessPiece opponentColor Rock)
     bishops = findPiecePositions board (ChessPiece opponentColor Bishop)
@@ -630,8 +631,7 @@ pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
 pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color
 pieceCandidateMoves board piece =
-  let x = case piece of (x, _, _) -> x
-      y = case piece of (_, y, _) -> y
+  let (x, y) = case piece of (x, y, _) -> (x, y)
    in map
         (\(x', y') -> Move x y x' y' Nothing)
         (pieceThreats board piece)
