@@ -291,13 +291,13 @@ evaluate'' cache params@EvaluateParams {moves, firstChoice, alpha, beta, depth, 
                     alpha = negateEval beta,
                     beta = negateEval alpha
                   }
-          (moveValue, _) <- do
+          (moveValue, newNodesParsed) <- do
             ((v, moves), nodes) <- evaluate' cache params'
             return ((negateEval v, moves), nodes)
           if (fst moveValue) > beta
             then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, moves ++ [candidateMove]), nodesParsed)
-            else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) nodesParsed)
+              return ((beta, moves ++ [candidateMove]), newNodesParsed)
+            else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
       -- evaluate with reduced depth (LMR).
@@ -337,11 +337,11 @@ evaluate'' cache params@EvaluateParams {moves, firstChoice, alpha, beta, depth, 
                     allowCaching = False
                   }
           evaluated' <- evaluate' cache params'
-          let moveValue = case evaluated' of ((v, moves), _) -> (negateEval v, moves)
+          let (moveValue, newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, moves), nodes)
           if (fst moveValue) > (fst bestMoveValue)
             then -- found better with reduced window: do full search
-              (foldCandidates' cache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, True) nodesParsed)
-            else (foldCandidates' cache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) nodesParsed)
+              (foldCandidates' cache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, True) newNodesParsed)
+            else (foldCandidates' cache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
       | otherwise = do
           let newMovesPath = moves ++ [candidateMove]
               params' =
