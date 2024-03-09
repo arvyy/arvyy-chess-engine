@@ -1,6 +1,8 @@
 = Arvy chess engine
 
-Homegrown chess engine in haskell with terrible performance. Operates through UCI. Features:
+Homegrown chess engine in haskell with terrible performance. Engine can only go 5-6 ply deep before taking unacceptable amount of time for a move, which seems very low given the employed heurstics, and I wasn't able debug why. 5-ply deep search scored around 1600 elo on lichess.
+
+Operates through UCI. Features:
 
 1. Alpha / beta pruning;
 2. Null move pruning;

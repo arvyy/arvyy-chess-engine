@@ -386,11 +386,11 @@ applyMoveUnsafe board (Move x y x' y' promotion) =
     applyNormalMove positions color pieceType =
       let p1 = clearPosition positions x y
           newMovedPiece = case promotion of
+            Nothing -> (ChessPiece color pieceType)
             Just PromoHorse -> (ChessPiece color Horse)
             Just PromoRock -> (ChessPiece color Rock)
             Just PromoQueen -> (ChessPiece color Queen)
             Just PromoBishop -> (ChessPiece color Bishop)
-            Nothing -> (ChessPiece color pieceType)
           p2 = setPosition p1 x' y' newMovedPiece
        in p2
 
@@ -410,24 +410,24 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
 pieceThreats board (x, y, ChessPiece color King) =
   let candidates = filter ((/= (x, y))) [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
-   in filter
+   in {-# SCC "m_pieceThreats_King" #-} filter
         (emptyOrOccupiedByOpponent board color)
         candidates
-pieceThreats board (x, y, ChessPiece color Queen) = pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop)
+pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop)
 pieceThreats board (x, y, ChessPiece color Pawn) =
   let nextRow = if color == Black then y - 1 else y + 1
       candidates = [(x - 1, nextRow), (x + 1, nextRow)]
-   in filter
+   in {-# SCC "m_pieceThreats_Pawn" #-} filter
         (emptyOrOccupiedByOpponent board color)
         candidates
 pieceThreats board (x, y, ChessPiece color Bishop) =
   let directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
       rays = map (pieceThreatsRay color board (x, y)) directions
-   in concat rays
+   in  {-# SCC "m_pieceThreats_Bishop" #-} concat rays
 pieceThreats board (x, y, ChessPiece color Rock) =
   let directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
       rays = map (pieceThreatsRay color board (x, y)) directions
-   in concat rays
+   in  {-# SCC "m_pieceThreats_Rock" #-} concat rays
 pieceThreats board (x, y, ChessPiece color Horse) =
   let candidates =
         [ (x + 1, y + 2),
@@ -439,7 +439,7 @@ pieceThreats board (x, y, ChessPiece color Horse) =
           (x - 2, y + 1),
           (x - 2, y - 1)
         ]
-   in filter
+   in  {-# SCC "m_pieceThreats_Horse" #-} filter
         (emptyOrOccupiedByOpponent board color)
         candidates
 
@@ -474,24 +474,20 @@ squareUnderThreat board player x y =
     || threatenedByKing
   where
     opponentColor = if player == White then Black else White
-    threatenedByHorse = not $ null $ do
-      (x', y') <-
-        [ (x + 1, y + 2),
-          (x + 1, y - 2),
-          (x - 1, y + 2),
-          (x - 1, y - 2),
-          (x + 2, y + 1),
-          (x + 2, y - 1),
-          (x - 2, y + 1),
-          (x - 2, y - 1)
-          ]
-      if inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse)
-        then [True]
-        else []
+    threatenedByHorse =
+        any (\(x', y') -> inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
+            [ (x + 1, y + 2),
+              (x + 1, y - 2),
+              (x - 1, y + 2),
+              (x - 1, y - 2),
+              (x + 2, y + 1),
+              (x + 2, y - 1),
+              (x - 2, y + 1),
+              (x - 2, y - 1) ]
 
     threatenedOnRay :: [ChessPieceType] -> Int -> Int -> Bool
     threatenedOnRay threateningTypes dx dy =
-      let ray = fmap (\i -> (x + dx * i, y + dy * i)) [1, 2, 3, 4, 5, 6, 7]
+      let ray = fmap (\i -> (x + dx * i, y + dy * i)) [1 .. 7]
           fold ((x', y') : rest) =
             if inBounds x' y'
               then case pieceOnSquare board x' y' of
@@ -651,15 +647,15 @@ pieceCandidateMoves board piece =
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
   let player = turn board
-      playerPieces = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
-      unsortedCandidatesWithCaptureInfo = concatMap pieceCandidatesWithCaptureInfo playerPieces
-      (captures, nonCaptures) = partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
-   in dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
+      playerPieces = {-# SCC "m_candidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
+      unsortedCandidatesWithCaptureInfo = {-# SCC "m_candidateMoves'2" #-} concatMap pieceCandidatesWithCaptureInfo playerPieces
+      (captures, nonCaptures) =  {-# SCC "m_candidateMoves'3" #-} partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
+   in {-# SCC "m_candidateMoves'4" #-} dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
   where
     -- first ChessPieceType is attacker, second is attacked
     pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe (ChessPieceType, ChessPieceType))]
     pieceCandidatesWithCaptureInfo piece@(x, y, ChessPiece _ attackerType) =
-      let moves = pieceCandidateMoves board piece
+      let moves = {-# SCC "m_pieceCandidatesWithCaptureInfo1" #-} pieceCandidateMoves board piece
           captureInfo Move {toRow, toCol} =
             case pieceOnSquare board toCol toRow of
               Just (ChessPiece _ attackedType) -> Just (attackerType, attackedType)
@@ -682,11 +678,11 @@ candidateMoves' board =
 
 candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
 candidateMoves board =
-  let candidates = candidateMoves' board
+  let candidates = {-# SCC "m_candidateMoves1" #-} candidateMoves' board
       validCandidates = do
         candidate <- candidates
-        let board' = applyMoveUnsafe board candidate
-        let inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck board' player
+        let board' = {-# SCC "m_candidateMoves2" #-} applyMoveUnsafe board candidate
+        let inCheck = {-# SCC "m_candidateMoves3" #-} (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck board' player
         if not inCheck then [(candidate, board')] else []
    in validCandidates
   where
