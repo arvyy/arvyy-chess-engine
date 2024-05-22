@@ -31,10 +31,10 @@ import Data.Bits
 import Data.Char
 import Data.Hashable
 import Data.Int (Int64)
-import Data.List (partition, sortBy)
+import Data.List (partition, sortBy, zip4)
 import Data.Maybe
 import Data.Ord
-import GHC.Generics (Generic)
+import GHC.Generics (Generic, K1 (K1))
 import GHC.Stack
 
 data ChessBoardPositions = ChessBoardPositions
@@ -158,8 +158,15 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit rocks bit = Just Rock
       | otherwise = Nothing
 
--- NB: that order must be increasing in piece value
 data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord)
+
+piecePriority :: ChessPieceType -> Int
+piecePriority Pawn = 1
+piecePriority Horse = 2
+piecePriority Bishop = 3
+piecePriority Rock = 5
+piecePriority Queen = 9
+piecePriority King = 20
 
 data PromoChessPieceType = PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq)
 
@@ -652,29 +659,25 @@ candidateMoves' board =
       (captures, nonCaptures) =  {-# SCC "m_candidateMoves'3" #-} partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
    in {-# SCC "m_candidateMoves'4" #-} dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
   where
-    -- first ChessPieceType is attacker, second is attacked
-    pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe (ChessPieceType, ChessPieceType))]
+    -- if move is a capture, returns relative difference of attacked piece minus attacking piece
+    pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe Int)]
     pieceCandidatesWithCaptureInfo piece@(x, y, ChessPiece _ attackerType) =
       let moves = {-# SCC "m_pieceCandidatesWithCaptureInfo1" #-} pieceCandidateMoves board piece
           captureInfo Move {toRow, toCol} =
             case pieceOnSquare board toCol toRow of
-              Just (ChessPiece _ attackedType) -> Just (attackerType, attackedType)
+              Just (ChessPiece _ attackedType) -> Just $ piecePriority attackedType - piecePriority attackerType
               _ -> Nothing
        in map (\move -> (move, captureInfo move)) moves
 
-    dropCaptureInfo :: [(Move, Maybe (ChessPieceType, ChessPieceType))] -> [Move]
+    dropCaptureInfo :: [(Move, a)] -> [Move]
     dropCaptureInfo = map fst
 
     -- returns order from least potential to most potential (will need to be flipped to move potential moves to front)
-    compareMoves :: (Move, Maybe (ChessPieceType, ChessPieceType)) -> (Move, Maybe (ChessPieceType, ChessPieceType)) -> Ordering
+    compareMoves :: (Move, Maybe Int) -> (Move, Maybe Int) -> Ordering
     compareMoves (_, Nothing) (_, Nothing) = EQ
     compareMoves (_, Just _) (_, Nothing) = GT
     compareMoves (_, Nothing) (_, Just _) = LT
-    compareMoves (_, Just (attacker1, attacked1)) (_, Just (attacker2, attacked2)) =
-      let attackedCmp = compare attacked1 attacked2
-       in if attackedCmp /= EQ
-            then attackedCmp
-            else compare (Down attacker1) (Down attacker2)
+    compareMoves (_, Just diff1) (_, Just diff2) = compare diff1 diff2
 
 candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
 candidateMoves board =
