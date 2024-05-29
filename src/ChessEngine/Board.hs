@@ -23,6 +23,7 @@ module ChessEngine.Board
     parseMove,
     moveToString,
     loadFen,
+    boardToFen,
     pieceThreats,
   )
 where
@@ -31,6 +32,7 @@ import Data.Bits
 import Data.Char
 import Data.Hashable
 import Data.Int (Int64)
+import Control.DeepSeq
 import Data.List (partition, sortBy, zip4)
 import Data.Maybe
 import Data.Ord
@@ -158,15 +160,7 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit rocks bit = Just Rock
       | otherwise = Nothing
 
-data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord)
-
-piecePriority :: ChessPieceType -> Int
-piecePriority Pawn = 1
-piecePriority Horse = 2
-piecePriority Bishop = 3
-piecePriority Rock = 5
-piecePriority Queen = 9
-piecePriority King = 20
+data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord, Enum)
 
 data PromoChessPieceType = PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq)
 
@@ -187,6 +181,9 @@ data ChessBoard = ChessBoard
   }
   deriving (Eq, Show, Ord, Generic)
 
+instance NFData ChessBoard where
+    rnf board = ()
+
 instance Hashable PlayerColor
 
 instance Hashable ChessBoardPositions
@@ -201,6 +198,9 @@ data Move = Move
     promotion :: !(Maybe PromoChessPieceType)
   }
   deriving (Show, Eq)
+
+instance NFData Move where
+    rnf move = ()
 
 boardPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
 boardPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn, Bishop, Horse, Rock, Queen, King]
@@ -648,36 +648,11 @@ pieceCandidateMoves board piece =
         (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
--- moves are ordered:
---  1. attacks, first oredered by attacked piece strength descending, then by attacking piece ascending
---  2. non-attacks
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
   let player = turn board
       playerPieces = {-# SCC "m_candidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
-      unsortedCandidatesWithCaptureInfo = {-# SCC "m_candidateMoves'2" #-} concatMap pieceCandidatesWithCaptureInfo playerPieces
-      (captures, nonCaptures) =  {-# SCC "m_candidateMoves'3" #-} partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
-   in {-# SCC "m_candidateMoves'4" #-} dropCaptureInfo ((sortBy (flip compareMoves) captures) ++ nonCaptures)
-  where
-    -- if move is a capture, returns relative difference of attacked piece minus attacking piece
-    pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe Int)]
-    pieceCandidatesWithCaptureInfo piece@(x, y, ChessPiece _ attackerType) =
-      let moves = {-# SCC "m_pieceCandidatesWithCaptureInfo1" #-} pieceCandidateMoves board piece
-          captureInfo Move {toRow, toCol} =
-            case pieceOnSquare board toCol toRow of
-              Just (ChessPiece _ attackedType) -> Just $ piecePriority attackedType - piecePriority attackerType
-              _ -> Nothing
-       in map (\move -> (move, captureInfo move)) moves
-
-    dropCaptureInfo :: [(Move, a)] -> [Move]
-    dropCaptureInfo = map fst
-
-    -- returns order from least potential to most potential (will need to be flipped to move potential moves to front)
-    compareMoves :: (Move, Maybe Int) -> (Move, Maybe Int) -> Ordering
-    compareMoves (_, Nothing) (_, Nothing) = EQ
-    compareMoves (_, Just _) (_, Nothing) = GT
-    compareMoves (_, Nothing) (_, Just _) = LT
-    compareMoves (_, Just diff1) (_, Just diff2) = compare diff1 diff2
+  in concatMap (\p -> pieceCandidateMoves board p) playerPieces
 
 candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
 candidateMoves board =
@@ -807,3 +782,38 @@ loadFen input = do
             blackQueenCastle = bq
           }
   return (board, input)
+
+boardToFen :: ChessBoard -> String
+boardToFen board =
+    rankToStr 8 ++
+    (concatMap (\i -> "/" ++ rankToStr (8 - i)) [1..7]) ++ 
+    " " ++
+    (if (turn board) == White then "w" else "b") ++ 
+    " " ++
+    castling ++
+    " - 1 1" -- TODO fix missing en pessant
+
+  where
+    pieceToStr (Just (ChessPiece Black Pawn)) = "p"
+    pieceToStr (Just (ChessPiece Black Horse)) = "n"
+    pieceToStr (Just (ChessPiece Black Bishop)) = "b"
+    pieceToStr (Just (ChessPiece Black Rock)) = "r"
+    pieceToStr (Just (ChessPiece Black Queen)) = "q"
+    pieceToStr (Just (ChessPiece Black King)) = "k"
+    pieceToStr (Just (ChessPiece White Pawn)) = "P"
+    pieceToStr (Just (ChessPiece White Horse)) = "N"
+    pieceToStr (Just (ChessPiece White Bishop)) = "B"
+    pieceToStr (Just (ChessPiece White Rock)) = "R"
+    pieceToStr (Just (ChessPiece White Queen)) = "Q"
+    pieceToStr (Just (ChessPiece White King)) = "K"
+    pieceToStr Nothing = "1"
+
+    rankToStr rank = concatMap (\file -> pieceToStr $ pieceOnSquare board file rank) [1..8]
+
+    castling = 
+        let str =
+                (if (whiteKingCastle board) then "K" else "") ++
+                (if (whiteQueenCastle board) then "Q" else "") ++
+                (if (blackKingCastle board) then "k" else "") ++
+                (if (blackQueenCastle board) then "q" else "")
+        in if (length str) == 0 then "-" else str

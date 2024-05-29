@@ -18,7 +18,8 @@ common deps
      transformers >=0.5,
      time >=1.9,
      stm >=2.5,
-     regex-pcre-builtin >=0.95
+     regex-pcre-builtin >=0.95,
+     deepseq >=1.4
 
 
 library chess-internal
