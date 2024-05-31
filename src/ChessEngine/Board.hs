@@ -158,15 +158,9 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit rocks bit = Just Rock
       | otherwise = Nothing
 
-data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord)
+data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord, Enum)
 
-piecePriority :: ChessPieceType -> Int
-piecePriority Pawn = 1
-piecePriority Horse = 2
-piecePriority Bishop = 3
-piecePriority Rock = 5
-piecePriority Queen = 9
-piecePriority King = 20
+piecePriority = fromEnum
 
 data PromoChessPieceType = PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq)
 
