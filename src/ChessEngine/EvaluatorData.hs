@@ -2,6 +2,7 @@
 module ChessEngine.EvaluatorData
 ( PositionEval(..)
 , negateEval
+, evalAdd
 , TranspositionValue(..)
 , ChessCache(..)
 , putValue
@@ -22,6 +23,9 @@ newtype PositionEval = PositionEval Float
 
 negateEval :: PositionEval -> PositionEval
 negateEval (PositionEval v) = PositionEval (-v)
+
+evalAdd :: PositionEval -> Float -> PositionEval
+evalAdd (PositionEval v) added = (PositionEval $ v + added)
 
 data TranspositionValue = TranspositionValue PositionEval Int deriving (Show)
 type TranspositionTable s = Map.HashTable s ChessBoard TranspositionValue
