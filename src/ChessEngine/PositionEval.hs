@@ -125,10 +125,25 @@ horizonEval cache depth board alpha beta
   | otherwise = do
       pat <- finalDepthEval cache board
       let alpha' = max alpha pat
-      let capturingMoves = (filter (\(move, _) -> isCaptureMove board move) (candidateMoves board))
-      if pat > beta
-        then return pat
+      let capturingMoves = (filter (\(move, _) -> examineMove pat move) (candidateMoves board))
+      if pat >= beta
+        then return beta
         else foldHorizonEval cache depth capturingMoves alpha' beta
+  where
+    -- examine only captures
+    -- apply "delta pruning", only consider captures
+    -- where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
+    deltaBuffer = 2.0
+    examineMove :: PositionEval -> Move -> Bool
+    examineMove pat Move { toCol, toRow } =
+        case pieceOnSquare board toCol toRow of
+            Just (ChessPiece _ Pawn) -> evalAdd pat (1 + deltaBuffer) > alpha
+            Just (ChessPiece _ Bishop) -> evalAdd pat (3 + deltaBuffer) > alpha
+            Just (ChessPiece _ Horse) -> evalAdd pat (3 + deltaBuffer) > alpha
+            Just (ChessPiece _ Rock) -> evalAdd pat (5 + deltaBuffer) > alpha
+            Just (ChessPiece _ Queen) -> evalAdd pat (9 + deltaBuffer) > alpha
+            _ -> False
+
 
 foldHorizonEval :: ChessCache s -> Int -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> ST s PositionEval
 foldHorizonEval cache depth ((_, board') : rest) alpha beta = do
