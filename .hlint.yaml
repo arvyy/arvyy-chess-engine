@@ -1,0 +1,4 @@
+- ignore:
+    name: Eta reduce
+- ignore:
+    name: Use <$>

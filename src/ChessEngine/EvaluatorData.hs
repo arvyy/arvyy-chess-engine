@@ -40,13 +40,13 @@ getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
 getValue (ChessCache table _) board = Map.lookup table board
 
 putPawnEvaluation :: ChessCache s -> Int64 -> Float -> ST s ()
-putPawnEvaluation (ChessCache _ pawns) pawnPosition value = Map.insert pawns pawnPosition value
+putPawnEvaluation (ChessCache _ pawns') pawnPosition value = Map.insert pawns' pawnPosition value
 
 getPawnEvaluation :: ChessCache s -> Int64 -> ST s (Maybe Float)
-getPawnEvaluation (ChessCache _ pawns) position = Map.lookup pawns position
+getPawnEvaluation (ChessCache _ pawns') position = Map.lookup pawns' position
 
 create :: ST s (ChessCache s)
 create = do
   table <- Map.new
-  pawns <- Map.new
-  return (ChessCache table pawns)
+  pawns' <- Map.new
+  return (ChessCache table pawns')

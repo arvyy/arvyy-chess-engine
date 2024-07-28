@@ -8,9 +8,7 @@ where
 
 import ChessEngine.Board
 import Control.Applicative
-import Control.Monad
 import Data.List
-import Debug.Trace
 import Text.Read (readMaybe)
 import Text.Regex.PCRE
 

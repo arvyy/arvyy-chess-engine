@@ -72,11 +72,11 @@ evaluatePawns cache board = do
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval :: ChessCache s -> ChessBoard -> ST s PositionEval
 finalDepthEval cache board = do
-  let score = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
+  let nonPawnScore = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
   pawnScore <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
-  return $ PositionEval (score + pawnScore)
+  return $ PositionEval (nonPawnScore + pawnScore)
   where
-    pieceMul color = if color == (turn board) then 1 else -1
+    pieceMul color = if color == turn board then 1 else -1
 
     scorePiece :: (Int, Int, ChessPiece) -> Float
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
@@ -84,33 +84,35 @@ finalDepthEval cache board = do
     scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
-    scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
-    scorePieceThreats board piece =
-      let isOwnSide y = case piece of
-            (_, _, ChessPiece White _) -> y < 5
-            _ -> y > 4
-          (ownSide, opponentSide) =
-            foldl'
-              (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
-              (0.0, 0.0)
-              (pieceThreats board piece)
-          typeMultiplier = case piece of
-            -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
-            -- without developing other pieces
-            (_, _, ChessPiece _ Queen) -> 0.5
-            _ -> 1.0
-       in (log (ownSide + 1.0) * 0.1 + log (opponentSide + 1.0) * 0.11) * typeMultiplier
+scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+scorePieceThreats board piece =
+  let isOwnSide y = case piece of
+        (_, _, ChessPiece White _) -> y < 5
+        _ -> y > 4
+      (ownSide, opponentSide) =
+        foldl'
+          (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
+          (0.0, 0.0)
+          (pieceThreats board piece)
+      typeMultiplier = case piece of
+        -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
+        -- without developing other pieces
+        -- TODO fix this by punishing evaluation for pieces being in starting position?
+        (_, _, ChessPiece _ Queen) -> 0.5
+        _ -> 1.0
+   in (log (ownSide + 1.0) * 0.1 + log (opponentSide + 1.0) * 0.11) * typeMultiplier
 
-    scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
-    scorePiecePosition board (x, y, piece@(ChessPiece _ pieceType)) =
-      let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
-          maxBonus = case pieceType of
-            Pawn -> 0.2
-            King -> 1
-            Bishop -> 0.5
-            Horse -> 0.5
-            Rock -> 0.2
-            Queen -> 0.0
-          score = (squareRating ** 1.8) * maxBonus
-       in score
+scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
+  let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
+      maxBonus = case pieceType of
+        Pawn -> 0.2
+        King -> 1
+        Bishop -> 0.5
+        Horse -> 0.5
+        Rock -> 0.2
+        Queen -> 0.0
+      score = (squareRating ** 1.8) * maxBonus
+   in score
