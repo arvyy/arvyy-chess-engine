@@ -16,6 +16,7 @@ import Control.Monad
 import Control.Monad.ST
 import Data.List (partition, sortBy)
 import Data.Maybe (isJust)
+import Debug.Trace (trace)
 
 -- end of the game
 outOfMovesEval :: ChessBoard -> PositionEval
@@ -58,8 +59,8 @@ evaluate' cache params@EvaluateParams {moves, board, depth = depth', maxDepth, n
         sortedCandidates <- sortCandidates cache board depth (candidateMoves board)
         ((eval', moves'), nodes, failedHigh) <- evaluate'' cache params sortedCandidates
         when allowCaching $ putValue cache board depth eval'
-        when ({-allowCaching && -}failedHigh && isQuetMove && (not $ null moves)) $ putKillerMove cache (depth + 1) (last moves)
-        return ((eval', moves'), if allowCaching then nodes + 1 else nodes)
+        when (allowCaching && failedHigh && isQuetMove && (not $ null moves)) $ (trace ("Killer: " ++ (show moves)) putKillerMove cache (depth + 1) (last moves))
+        return ((eval', moves'), nodes + 1)
   case tableHit of
     Just (TranspositionValue eval cachedDepth) ->
       if cachedDepth >= depth
@@ -73,7 +74,7 @@ sortCandidates cache board depth candidates =
         (movesFromCache, otherMoves) <- partitionAndSortCacheMoves cache candidates
         let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves otherMoves
         (killerMoves, otherMoves'') <- partitionKillerMoves cache depth otherMoves'
-        return $ movesFromCache ++ goodCaptureMoves ++ killerMoves ++ otherMoves'' ++ badCaptureMoves
+        return $ movesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
   where
     partitionAndSortCacheMoves :: ChessCache s -> [(Move, ChessBoard)] -> ST s ([(Move, ChessBoard)], [(Move, ChessBoard)])
     partitionAndSortCacheMoves cache moves = do
@@ -96,8 +97,8 @@ sortCandidates cache board depth candidates =
             removeCaptureInfo (move, board, eval) = (move, board)
             captureMoveComparator (_, _, Just v1) (_, _, Just v2) = compare v1 v2
             goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
+            badCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) badCaptures)
             otherMoves' = removeCaptureInfo <$> otherMoves
-            badCaptures' = removeCaptureInfo <$> badCaptures
         in (goodCaptures', badCaptures', otherMoves')
 
     augmentWithCaptureInfo :: (Move, ChessBoard) -> (Move, ChessBoard, Maybe Int)
@@ -165,7 +166,7 @@ evaluate'' cache params@EvaluateParams {moves, firstChoice, alpha, beta, depth, 
        in return ((eval, moves), nodesParsed, False)
   | depth <= 0 = do
       eval <- horizonEval cache 10 board alpha beta
-      return ((eval, moves), nodesParsed, False)
+      return ((eval, moves), nodesParsed, eval > beta)
   | otherwise = foldCandidates cache candidates alpha beta
   where
     foldCandidates :: ChessCache s -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> EvaluateInternalResult s
@@ -187,6 +188,7 @@ evaluate'' cache params@EvaluateParams {moves, firstChoice, alpha, beta, depth, 
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
                     beta = negateEval alpha,
+                    allowCaching = False,
                     isQuetMove = not $ isCaptureMove board candidateMove
                   }
           (moveValue, newNodesParsed) <- do
@@ -194,7 +196,7 @@ evaluate'' cache params@EvaluateParams {moves, firstChoice, alpha, beta, depth, 
             return ((negateEval v, moves), nodes)
           if (fst moveValue) > beta
             then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, moves ++ [candidateMove]), newNodesParsed, True)
+              return (((fst moveValue), moves ++ [candidateMove]), newNodesParsed, True)
             else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
