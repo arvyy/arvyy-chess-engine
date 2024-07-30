@@ -38,3 +38,7 @@ cabal test
 cabal build
 $(cabal exec which chessengine_benchmark)
 ----
+
+TODO: 
+
+1. store whether score is exact, lower, higher bound in transposition table
