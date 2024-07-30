@@ -16,7 +16,7 @@ import ChessEngine.HeuristicEvaluator
 import Control.Monad
 import Control.Monad.ST
 import Data.List (partition, sortBy)
-import Data.Maybe (isJust)
+import Data.Maybe (isJust, mapMaybe)
 
 -- end of the game
 outOfMovesEval :: ChessBoard -> PositionEval
@@ -55,8 +55,8 @@ evaluate' cache params@EvaluateParams {moves, board, depth = depth', nodesParsed
   let depth = max depth' 0
   tableHit <- getValue cache board
   let doSearch = do
-        sortedCandidates <- sortCandidates cache board alpha depth (candidateMoves board)
-        let sortedCandidatesWithBoards = (\move -> (move, applyMoveUnsafe board move)) <$> sortedCandidates
+        sortedCandidates <- sortCandidates cache board alpha depth (pseudoLegalCandidateMoves board)
+        let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
         ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
         when allowCaching $ putValue cache board depth eval' bound
         return ((eval', moves'), if allowCaching then nodes + 1 else nodes)
@@ -131,7 +131,7 @@ horizonEval cache depth board alpha beta
   | otherwise = do
       pat <- finalDepthEval cache board
       let alpha' = max alpha pat
-      let capturingMoves = (filter (\move -> examineMove pat move) (candidateMoves board))
+      let capturingMoves = (filter (\move -> (examineMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
       if pat >= beta
         then return beta
         else foldHorizonEval cache depth board capturingMoves alpha' beta

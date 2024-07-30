@@ -15,7 +15,8 @@ module ChessEngine.Board
     boardNonPawnPositions,
     boardPawnPositions,
     pieceOnSquare,
-    candidateMoves,
+    pseudoLegalCandidateMoves,
+    candidateMoveLegal,
     initialBoard,
     applyMove,
     applyMoveUnsafe,
@@ -35,6 +36,7 @@ import Data.Hashable
 import Data.Int (Int64)
 import Data.Maybe
 import GHC.Generics (Generic)
+import Data.Foldable (find)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -624,21 +626,22 @@ pieceCandidateMoves board piece@(x, y, _) = map
         (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
-candidateMoves' :: ChessBoard -> [Move]
-candidateMoves' board =
+-- ie., pseudo legal
+pseudoLegalCandidateMoves :: ChessBoard -> [Move]
+pseudoLegalCandidateMoves board =
   let player = turn board
-      playerPieces = {-# SCC "m_candidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
+      playerPieces = {-# SCC "m_pseudoLegalCandidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
   in concatMap (\p -> pieceCandidateMoves board p) playerPieces
 
-candidateMoves :: ChessBoard -> [Move]
-candidateMoves board =
-  let candidates = {-# SCC "m_candidateMoves1" #-} candidateMoves' board
-      validCandidates = do
-        candidate <- candidates
-        let board' = applyMoveUnsafe board candidate
-        let inCheck = (wasInCheck || wasPotentiallyPinned && movePotentiallyBreakingPin candidate || isKingMove candidate) && playerInCheck board' player
-        ([candidate | not inCheck])
-   in validCandidates
+-- returns just if given candidate is legal, empty otherwise
+-- (candidate can be illegal because pseudoLegalCandidateMoves returns pseudolegal moves)
+candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
+candidateMoveLegal board candidate =
+  let board' = applyMoveUnsafe board candidate
+      inCheck = (wasInCheck || wasPotentiallyPinned && movePotentiallyBreakingPin candidate || isKingMove candidate) && playerInCheck board' player
+  in if not inCheck
+     then return board'
+     else Nothing
   where
     player = turn board
     wasInCheck = playerInCheck board player
@@ -652,12 +655,10 @@ candidateMoves board =
       fromRow == king_y && fromCol == king_x
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
-applyMove board move =
-  let candidates = candidateMoves board
-      matches = filter (\move' -> move' == move) candidates
-   in case matches of
-        [] -> Nothing
-        _ -> return $ applyMoveUnsafe board move
+applyMove board move = do
+  let candidates = pseudoLegalCandidateMoves board
+  matchedCandidate <- find (\move' -> move' == move) candidates
+  candidateMoveLegal board matchedCandidate
 
 isCaptureMove :: ChessBoard -> Move -> Bool
 isCaptureMove board Move {toCol, toRow} =
