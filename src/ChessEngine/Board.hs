@@ -18,12 +18,14 @@ module ChessEngine.Board
     candidateMoves,
     initialBoard,
     applyMove,
+    applyMoveUnsafe,
     isCaptureMove,
     playerInCheck,
     parseMove,
     moveToString,
     loadFen,
     pieceThreats,
+    boardToFen
   )
 where
 
@@ -31,7 +33,6 @@ import Data.Bits
 import Data.Char
 import Data.Hashable
 import Data.Int (Int64)
-import Data.List (partition, sortBy)
 import Data.Maybe
 import GHC.Generics (Generic)
 
@@ -623,45 +624,20 @@ pieceCandidateMoves board piece@(x, y, _) = map
         (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
--- moves are ordered:
---  1. attacks, first oredered by attacked piece strength descending, then by attacking piece ascending
---  2. non-attacks
 candidateMoves' :: ChessBoard -> [Move]
 candidateMoves' board =
   let player = turn board
       playerPieces = {-# SCC "m_candidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
-      unsortedCandidatesWithCaptureInfo = {-# SCC "m_candidateMoves'2" #-} concatMap pieceCandidatesWithCaptureInfo playerPieces
-      (captures, nonCaptures) =  {-# SCC "m_candidateMoves'3" #-} partition (\(_, info) -> isJust info) unsortedCandidatesWithCaptureInfo
-   in {-# SCC "m_candidateMoves'4" #-} dropCaptureInfo (sortBy (flip compareMoves) captures ++ nonCaptures)
-  where
-    -- if move is a capture, returns relative difference of attacked piece minus attacking piece
-    pieceCandidatesWithCaptureInfo :: (Int, Int, ChessPiece) -> [(Move, Maybe Int)]
-    pieceCandidatesWithCaptureInfo piece@(_, _, ChessPiece _ attackerType) =
-      let moves = {-# SCC "m_pieceCandidatesWithCaptureInfo1" #-} pieceCandidateMoves board piece
-          captureInfo Move {toRow, toCol} =
-            case pieceOnSquare board toCol toRow of
-              Just (ChessPiece _ attackedType) -> Just $ piecePriority attackedType - piecePriority attackerType
-              _ -> Nothing
-       in map (\move -> (move, captureInfo move)) moves
+  in concatMap (\p -> pieceCandidateMoves board p) playerPieces
 
-    dropCaptureInfo :: [(Move, a)] -> [Move]
-    dropCaptureInfo = map fst
-
-    -- returns order from least potential to most potential (will need to be flipped to move potential moves to front)
-    compareMoves :: (Move, Maybe Int) -> (Move, Maybe Int) -> Ordering
-    compareMoves (_, Nothing) (_, Nothing) = EQ
-    compareMoves (_, Just _) (_, Nothing) = GT
-    compareMoves (_, Nothing) (_, Just _) = LT
-    compareMoves (_, Just diff1) (_, Just diff2) = compare diff1 diff2
-
-candidateMoves :: ChessBoard -> [(Move, ChessBoard)]
+candidateMoves :: ChessBoard -> [Move]
 candidateMoves board =
   let candidates = {-# SCC "m_candidateMoves1" #-} candidateMoves' board
       validCandidates = do
         candidate <- candidates
-        let board' = {-# SCC "m_candidateMoves2" #-} applyMoveUnsafe board candidate
-        let inCheck = {-# SCC "m_candidateMoves3" #-} (wasInCheck || wasPotentiallyPinned && movePotentiallyBreakingPin candidate || isKingMove candidate) && playerInCheck board' player
-        ([(candidate, board') | not inCheck])
+        let board' = applyMoveUnsafe board candidate
+        let inCheck = (wasInCheck || wasPotentiallyPinned && movePotentiallyBreakingPin candidate || isKingMove candidate) && playerInCheck board' player
+        ([candidate | not inCheck])
    in validCandidates
   where
     player = turn board
@@ -678,10 +654,10 @@ candidateMoves board =
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move =
   let candidates = candidateMoves board
-      matches = filter (\c -> fst c == move) candidates
+      matches = filter (\move' -> move' == move) candidates
    in case matches of
         [] -> Nothing
-        ((_, board') : _) -> Just board'
+        _ -> return $ applyMoveUnsafe board move
 
 isCaptureMove :: ChessBoard -> Move -> Bool
 isCaptureMove board Move {toCol, toRow} =
@@ -782,3 +758,38 @@ loadFen input = do
             blackQueenCastle = bq
           }
   return (board, input)
+
+boardToFen :: ChessBoard -> String
+boardToFen board =
+    rankToStr 8 ++
+    (concatMap (\i -> "/" ++ rankToStr (8 - i)) [1..7]) ++ 
+    " " ++
+    (if (turn board) == White then "w" else "b") ++ 
+    " " ++
+    castling ++
+    " - 1 1" -- TODO fix missing en pessant
+
+  where
+    pieceToStr (Just (ChessPiece Black Pawn)) = "p"
+    pieceToStr (Just (ChessPiece Black Horse)) = "n"
+    pieceToStr (Just (ChessPiece Black Bishop)) = "b"
+    pieceToStr (Just (ChessPiece Black Rock)) = "r"
+    pieceToStr (Just (ChessPiece Black Queen)) = "q"
+    pieceToStr (Just (ChessPiece Black King)) = "k"
+    pieceToStr (Just (ChessPiece White Pawn)) = "P"
+    pieceToStr (Just (ChessPiece White Horse)) = "N"
+    pieceToStr (Just (ChessPiece White Bishop)) = "B"
+    pieceToStr (Just (ChessPiece White Rock)) = "R"
+    pieceToStr (Just (ChessPiece White Queen)) = "Q"
+    pieceToStr (Just (ChessPiece White King)) = "K"
+    pieceToStr Nothing = "1"
+
+    rankToStr rank = concatMap (\file -> pieceToStr $ pieceOnSquare board file rank) [1..8]
+
+    castling = 
+        let str =
+                (if (whiteKingCastle board) then "K" else "") ++
+                (if (whiteQueenCastle board) then "Q" else "") ++
+                (if (blackKingCastle board) then "k" else "") ++
+                (if (blackQueenCastle board) then "q" else "")
+        in if (length str) == 0 then "-" else str
