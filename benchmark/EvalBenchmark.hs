@@ -27,15 +27,16 @@ countNodes fen depth =
 countNodes' board depth
   | depth == 0 = 1
   | otherwise =
-      let candidates = candidateMoves board
+      let candidates = pseudoLegalCandidateMoves board
+          validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board candidate) candidates
           countCandidates count move = count + countNodes' (applyMoveUnsafe board move) (depth - 1)
-       in foldl' countCandidates 0 candidates
+       in foldl' countCandidates 0 validCandidates
 
 main =
   defaultMain
     [ bgroup
         "position eval"
-        [ --bench "Initial pos 5 depth" $ whnf (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 5,
+        [ bench "Initial pos 5 depth" $ whnf (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 5,
           bench "Midgame pos 5 depth" $ whnf (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11") 5
         ],
       bgroup

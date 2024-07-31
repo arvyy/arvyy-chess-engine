@@ -12,6 +12,12 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
 
+candidateMoves board = mapMaybe mapper $ pseudoLegalCandidateMoves board
+    where
+        mapper move = do
+            board' <- candidateMoveLegal board move
+            return (move, board')
+
 -- makes random valid move or returns itself if no moves available
 applyRandomMove :: ChessBoard -> Gen ChessBoard
 applyRandomMove board =
