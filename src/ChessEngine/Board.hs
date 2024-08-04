@@ -37,6 +37,7 @@ import Data.Int (Int64)
 import Data.Maybe
 import GHC.Generics (Generic)
 import Data.Foldable (find)
+import ChessEngine.PrecomputedCandidateMoves
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -269,6 +270,14 @@ otherPlayer :: PlayerColor -> PlayerColor
 otherPlayer Black = White
 otherPlayer White = Black
 
+isPlayerOnSquare :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
+isPlayerOnSquare ChessBoard { pieces = ChessBoardPositions{ white } } White x y =
+    let bitIndex = coordsToBitIndex x y
+    in testBit white bitIndex
+isPlayerOnSquare ChessBoard { pieces = ChessBoardPositions{ black } } Black x y =
+    let bitIndex = coordsToBitIndex x y
+    in testBit black bitIndex
+
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board = pieceOnSquare' (pieces board)
 
@@ -409,23 +418,21 @@ pieceThreats board (x, y, ChessPiece color King) =
    in {-# SCC "m_pieceThreats_King" #-} filter
         (emptyOrOccupiedByOpponent board color)
         candidates
-pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop)
-pieceThreats board (x, y, ChessPiece color Pawn) =
+pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} (pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop))
+pieceThreats board (x, y, ChessPiece color Pawn) = {-# SCC "m_pieceThreats_Pawn" #-}
   let nextRow = if color == Black then y - 1 else y + 1
       candidates = [(x - 1, nextRow), (x + 1, nextRow)]
-   in {-# SCC "m_pieceThreats_Pawn" #-} filter
+   in filter
         (emptyOrOccupiedByOpponent board color)
         candidates
-pieceThreats board (x, y, ChessPiece color Bishop) =
-  let directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
-      rays = map (pieceThreatsRay color board (x, y)) directions
-   in  {-# SCC "m_pieceThreats_Bishop" #-} concat rays
-pieceThreats board (x, y, ChessPiece color Rock) =
-  let directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-      rays = map (pieceThreatsRay color board (x, y)) directions
-   in  {-# SCC "m_pieceThreats_Rock" #-} concat rays
-pieceThreats board (x, y, ChessPiece color Horse) =
-  let candidates =
+pieceThreats board (x, y, ChessPiece color Bishop) = {-# SCC "m_pieceThreats_Bishop" #-}
+   let rays = emptyBoardBishopRays x y
+   in concatMap (rayToValidMoves color board) rays
+pieceThreats board (x, y, ChessPiece color Rock) = {-# SCC "m_pieceThreats_Rock" #-}
+   let rays = emptyBoardRockRays x y
+   in concatMap (rayToValidMoves color board) rays
+pieceThreats board (x, y, ChessPiece color Horse) = {-# SCC "m_pieceThreats_Horse" #-} 
+   let candidates =
         [ (x + 1, y + 2),
           (x + 1, y - 2),
           (x - 1, y + 2),
@@ -435,30 +442,18 @@ pieceThreats board (x, y, ChessPiece color Horse) =
           (x - 2, y + 1),
           (x - 2, y - 1)
         ]
-   in  {-# SCC "m_pieceThreats_Horse" #-} filter
+   in  filter
         (emptyOrOccupiedByOpponent board color)
         candidates
 
-pieceThreatsRay :: PlayerColor -> ChessBoard -> (Int, Int) -> (Int, Int) -> [(Int, Int)]
-pieceThreatsRay color board (x, y) (dx, dy) =
-  let maxLengthX
-        | dx == 0 = 7
-        | dx > 0 = 8 - x
-        | otherwise = x - 1
-      maxLengthY
-        | dy == 0 = 7
-        | dy > 0 = 8 - y
-        | otherwise = y - 1
-      !maxLength = min maxLengthX maxLengthY
-      offsetRange = [1 .. maxLength]
-      squares = map (\i -> (x + i * dx, y + i * dy)) offsetRange
-      squareAndPieceList :: [((Int, Int), Maybe ChessPiece)]
-      squareAndPieceList = map (\square -> (square, uncurry (pieceOnSquare board) square)) squares
-   in filterUntilHit squareAndPieceList
+rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
+rayToValidMoves color board squares = filterUntilHit squares
   where
-    filterUntilHit :: [((Int, Int), Maybe ChessPiece)] -> [(Int, Int)]
-    filterUntilHit (((x, y), Nothing) : rest) = (x, y) : filterUntilHit rest
-    filterUntilHit (((x, y), Just (ChessPiece pieceColor _)) : rest) = [(x, y) | not (pieceColor == color)]
+    filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
+    filterUntilHit ((x, y) : rest) 
+        | isPlayerOnSquare board color x y = []
+        | isPlayerOnSquare board (otherPlayer color) x y = [(x, y)]
+        | otherwise = (x, y) : filterUntilHit rest
     filterUntilHit [] = []
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
@@ -515,26 +510,26 @@ squareUnderThreat board player x y =
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
-  checkRayPin (x - 1) (y - 1) (-1) (-1) False [Queen, Bishop] ||
-  checkRayPin (x + 1) (y - 1) 1 (-1) False [Queen, Bishop] ||
-  checkRayPin (x - 1) (y + 1) (-1) 1 False [Queen, Bishop] ||
-  checkRayPin (x + 1) (y + 1) 1 1 False [Queen, Bishop] ||
-  checkRayPin (x + 1) y 1 0 False [Queen, Rock] ||
-  checkRayPin x (y + 1) 0 1 False [Queen, Rock] ||
-  checkRayPin (x - 1) y (-1) 0 False [Queen, Rock] ||
-  checkRayPin x (y - 1) 0 (-1) False [Queen, Rock]
+  any (\ray -> checkRayPin ray False [Queen, Bishop]) (emptyBoardBishopRays x y) ||
+  any (\ray -> checkRayPin ray False [Queen, Rock]) (emptyBoardRockRays x y)
   where
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition (pieces board) player
 
-    checkRayPin :: Int -> Int -> Int -> Int -> Bool -> [ChessPieceType] -> Bool
-    checkRayPin x y dx dy ownPieceSeen pinnerTypes
-        | not $ inBounds x y = False
-        | otherwise =
-            case pieceOnSquare board x y of
-                Just (ChessPiece color pieceType) ->
-                    (ownPieceSeen && color == opponentColor && elem pieceType pinnerTypes) || (not ownPieceSeen && ((color /= opponentColor) && checkRayPin (x + dx) (y + dy) dx dy True pinnerTypes))
-                Nothing -> checkRayPin (x + dx) (y + dy) dx dy ownPieceSeen pinnerTypes
+    checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
+    checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
+        let ownPiece = isPlayerOnSquare board player x y
+            opponentPiece = isPlayerOnSquare board opponentColor x y
+        in if ownPieceSeen && ownPiece 
+           then False
+           else if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
+                                                        Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
+                                                        _ -> False
+           then True
+           else if not ownPieceSeen && ownPiece
+           then checkRayPin rest True pinnerTypes
+           else False
+    checkRayPin [] _ _ = False
 
 
 {-# INLINE playerInCheck #-}

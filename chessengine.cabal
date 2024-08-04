@@ -33,6 +33,7 @@ library chess-internal
     ChessEngine.UCI,
     ChessEngine.EvaluatorData,
     ChessEngine.HeuristicEvaluator
+    ChessEngine.PrecomputedCandidateMoves
     
 executable chessengine_uci
   import: deps

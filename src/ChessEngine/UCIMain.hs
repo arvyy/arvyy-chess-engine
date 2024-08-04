@@ -11,6 +11,7 @@ import Data.Maybe
 import Data.Time.Clock
 import Debug.Trace
 import System.IO
+import System.Exit (exitSuccess)
 
 data EngineState = EngineState
   { board :: !(Maybe ChessBoard),
@@ -28,8 +29,8 @@ main = do
   hSetBuffering stdout LineBuffering
   hSetBuffering stderr LineBuffering
   commandsBuffer <- newTChanIO
-  forkIO $ handleCommands commandsBuffer blank
-  bufferCommands commandsBuffer
+  forkIO $ bufferCommands commandsBuffer
+  handleCommands commandsBuffer blank
 
 handleCommands :: TChan UCICommand -> EngineState -> IO ()
 handleCommands commandBuffer state = do
@@ -45,20 +46,28 @@ handleCommands commandBuffer state = do
       else do
         now <- getCurrentTime
         cmd <- atomically $ readTChan commandBuffer
-        return $ doHandleCommand cmd state now
+        case cmd of 
+            Quit -> do 
+                hFlush stdout
+                exitSuccess
+            _ -> return $ doHandleCommand cmd state now
   forM_ output putStrLn
+  hFlush stdout
   handleCommands commandBuffer newState
 
 bufferCommands :: TChan UCICommand -> IO ()
 bufferCommands commandsBuffer = do
-  line <- getLine
-  let cmd = parseUCICommand line
-  case cmd of
-    Just Quit -> return ()
-    Just c -> do
-      atomically $ writeTChan commandsBuffer c
-      bufferCommands commandsBuffer
-    Nothing -> bufferCommands commandsBuffer
+  end <- isEOF
+  if not end
+  then do
+          line <- getLine
+          let cmd = parseUCICommand line
+          case cmd of
+            Just c -> do
+              atomically $ writeTChan commandsBuffer c
+              bufferCommands commandsBuffer
+            Nothing -> bufferCommands commandsBuffer
+  else forever yield
 
 doHandleCommand :: UCICommand -> EngineState -> UTCTime -> ([String], EngineState)
 doHandleCommand UCI state _ = (["id name ArvyyChessEngine", "id author Arvyy", "", "uciok"], state)
@@ -72,7 +81,8 @@ doHandleCommand (Go props) state now =
       deadline = fmap (\ms -> addUTCTime (realToFrac (fromIntegral ms / 1000.0)) now) (moveTime props)
       initialResult = fmap (\b -> evaluate b depth') (board state)
       newState = state {result = initialResult, evalTimeLimit = deadline, evalNodeLimit = (nodes props)}
-   in ([], newState)
+   -- in ([], newState)
+   in resumeThinking newState now
 doHandleCommand _ state _ = ([], state)
 
 chanEmpty :: TChan a -> IO Bool
