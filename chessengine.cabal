@@ -35,6 +35,13 @@ executable chessengine_uci
   build-depends:
     chess-internal
 
+executable chessengine_bench
+  import: deps
+  main-is: src/ChessEngine/BenchMain.hs
+  default-language: Haskell2010
+  build-depends:
+    chess-internal
+
 benchmark chessengine_benchmark
   import: deps
   type: exitcode-stdio-1.0

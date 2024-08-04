@@ -194,8 +194,7 @@ data EvaluateResult = EvaluateResult
     finished :: !Bool,
     evaluation :: !PositionEval,
     moves :: ![Move],
-    continuation :: EvaluateResult
-  }
+    continuation :: EvaluateResult }
   deriving (Show)
 
 evaluate' :: ChessCache s -> EvaluateParams -> ST s ((PositionEval, [Move]), Int)
