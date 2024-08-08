@@ -105,8 +105,10 @@ coordsToBitIndex x y =
 
 {-# INLINE clearPosition #-}
 clearPosition :: ChessBoardPositions -> Int -> Int -> ChessBoardPositions
-clearPosition (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y =
-  ChessBoardPositions
+clearPosition positions@(ChessBoardPositions black white bishops horses queens kings pawns rocks) x y =
+  if not $ testBit (black .|. white) bitIndex
+  then positions
+  else ChessBoardPositions
     { black = clearBit black bitIndex,
       white = clearBit white bitIndex,
       bishops = clearBit bishops bitIndex,
@@ -148,11 +150,12 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit white bitIndex = Just White
       | otherwise = Nothing
     pieceType
+      | not $ testBit (white .|. black) bitIndex = Nothing
+      | testBit pawns bitIndex = Just Pawn
       | testBit bishops bitIndex = Just Bishop
       | testBit horses bitIndex = Just Horse
       | testBit queens bitIndex = Just Queen
       | testBit kings bitIndex = Just King
-      | testBit pawns bitIndex = Just Pawn
       | testBit rocks bitIndex = Just Rock
       | otherwise = Nothing
 
@@ -476,10 +479,9 @@ squareUnderThreat board player x y =
               (x - 2, y + 1),
               (x - 2, y - 1) ]
 
-    threatenedOnRay :: [ChessPieceType] -> Int -> Int -> Bool
-    threatenedOnRay threateningTypes dx dy =
-      let ray = fmap (\i -> (x + dx * i, y + dy * i)) [1 .. 7]
-          fold ((x', y') : rest) =
+    threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
+    threatenedOnRay threateningTypes ray =
+      let fold ((x', y') : rest) =
             (inBounds x' y' && (case pieceOnSquare board x' y' of
                 Just (ChessPiece color' pieceType') ->
                   color' == opponentColor && elem pieceType' threateningTypes
@@ -487,17 +489,8 @@ squareUnderThreat board player x y =
           fold [] = False
        in fold ray
 
-    threatenedByBishopOrQueen =
-      threatenedOnRay [Queen, Bishop] 1 1
-        || threatenedOnRay [Queen, Bishop] (-1) 1
-        || threatenedOnRay [Queen, Bishop] 1 (-1)
-        || threatenedOnRay [Queen, Bishop] (-1) (-1)
-
-    threatenedByRockOrQueen =
-      threatenedOnRay [Queen, Rock] 0 1
-        || threatenedOnRay [Queen, Rock] 1 0
-        || threatenedOnRay [Queen, Rock] 0 (-1)
-        || threatenedOnRay [Queen, Rock] (-1) 0
+    threatenedByBishopOrQueen = any (\ray -> threatenedOnRay [Queen, Bishop] ray) (emptyBoardBishopRays x y)
+    threatenedByRockOrQueen = any (\ray -> threatenedOnRay [Queen, Rock] ray) (emptyBoardRockRays x y)
 
     threatenedByPawn =
       let y' = if player == White then y + 1 else y - 1
@@ -520,8 +513,8 @@ playerPotentiallyPinned board player =
     checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
         let ownPiece = isPlayerOnSquare board player x y
             opponentPiece = isPlayerOnSquare board opponentColor x y
-        in if ownPieceSeen && ownPiece 
-           then False
+        in if not ownPiece && not opponentPiece
+           then checkRayPin rest ownPieceSeen pinnerTypes
            else if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
                                                         Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
                                                         _ -> False
@@ -623,9 +616,9 @@ pieceCandidateMoves board piece@(x, y, _) = map
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
 -- ie., pseudo legal
 pseudoLegalCandidateMoves :: ChessBoard -> [Move]
-pseudoLegalCandidateMoves board =
+pseudoLegalCandidateMoves board = {-# SCC "m_pseudoLegalCandidateMoves" #-}
   let player = turn board
-      playerPieces = {-# SCC "m_pseudoLegalCandidateMoves'1" #-} playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
+      playerPieces = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
   in concatMap (\p -> pieceCandidateMoves board p) playerPieces
 
 -- returns just if given candidate is legal, empty otherwise
@@ -633,7 +626,7 @@ pseudoLegalCandidateMoves board =
 candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
-      inCheck = (wasInCheck || wasPotentiallyPinned && movePotentiallyBreakingPin candidate || isKingMove candidate) && playerInCheck board' player
+      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck board' player
   in if not inCheck
      then return board'
      else Nothing

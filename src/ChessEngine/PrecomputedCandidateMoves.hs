@@ -48,7 +48,7 @@ computeRockRays x y =
 
 computeRay :: Int -> Int -> Int -> Int -> [(Int, Int)]
 computeRay x y dx dy = do
-  offset <- [1 .. 7]
+  offset <- [1 .. 8]
   let x' = x + offset * dx
   let y' = y + offset * dy
   if x' >= 1 && x' <= 8 && y' >= 1 && y' <= 8

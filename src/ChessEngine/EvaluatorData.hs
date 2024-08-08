@@ -40,7 +40,7 @@ putValue (ChessCache table _) board depth value bound = do
   existingValue <- Map.lookup table board
   case existingValue of
     Just (TranspositionValue _ _ prevDepth) ->
-      when (depth > prevDepth) $ Map.insert table board (TranspositionValue bound value depth)
+      when (depth >= prevDepth) $ Map.insert table board (TranspositionValue bound value depth)
     Nothing -> Map.insert table board (TranspositionValue bound value depth)
 
 getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
