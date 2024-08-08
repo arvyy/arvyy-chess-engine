@@ -205,7 +205,7 @@ evaluate' cache params@EvaluateParams {moves, board, depth = depth', nodesParsed
         sortedCandidates <- sortCandidates cache (candidateMoves board) (turn board)
         ((eval', moves'), nodes) <- evaluate'' cache params sortedCandidates
         when allowCaching $ putValue cache board depth eval'
-        return ((eval', moves'), if allowCaching then nodes + 1 else nodes)
+        return ((eval', moves'), nodes + 1)
   case tableHit of
     Just (TranspositionValue eval cachedDepth) ->
       if cachedDepth >= depth
