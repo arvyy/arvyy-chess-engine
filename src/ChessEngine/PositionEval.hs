@@ -29,8 +29,7 @@ outOfMovesEval board =
         else PositionEval $ (-1) / 0
 
 data EvaluateParams = EvaluateParams
-  { moves :: ![Move],
-    alpha :: !PositionEval,
+  { alpha :: !PositionEval,
     beta :: !PositionEval,
     depth :: !Int,
     maxDepth :: !Int,
@@ -48,26 +47,24 @@ data EvaluateResult = EvaluateResult
   deriving (Show)
 
 evaluate' :: ChessCache s -> EvaluateParams -> ST s ((PositionEval, [Move]), Int)
-evaluate' cache params@EvaluateParams {moves, board, depth = depth', nodesParsed, alpha, beta } = do
+evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta } = do
   let depth = max depth' 0
   tableHit <- getValue cache board
   let doSearch = do
         sortedCandidates <- sortCandidates cache board alpha depth (pseudoLegalCandidateMoves board)
         let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
-        ((eval', moves', maybeBestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
-        case maybeBestMove of
-            Just bestMove -> putValue cache board depth eval' bound bestMove
-            _ -> return ()
+        ((eval', moves', bestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
+        putValue cache board depth eval' bound moves'
         let result = ((eval', moves'), nodes + 1)
         return result
   case tableHit of
-    Just (TranspositionValue bound eval cachedDepth bestMove) ->
+    Just (TranspositionValue bound eval cachedDepth bestMoveLine) ->
       if cachedDepth < depth
       then doSearch
       else if ((bound == Exact) ||
                (bound == LowerBound && eval > beta) ||
                (bound == UpperBound && eval < alpha))
-      then return ((eval, moves ++ [bestMove]), nodesParsed)
+      then return ((eval, bestMoveLine), nodesParsed)
       else doSearch
     Nothing -> doSearch
 
@@ -83,8 +80,8 @@ sortCandidates cache board alpha depth candidates =
     partitionAndSortCacheMoves cache moves = do
         maybeCachedMove <- getValue cache board
         return $ case maybeCachedMove of
-            Just (TranspositionValue _ _ _ move) -> partition (\m -> move == m) moves
-            Nothing -> ([], moves)
+            Just (TranspositionValue _ _ _ (move : _)) -> partition (\m -> move == m) moves
+            _ -> ([], moves)
 
     partitionAndSortCaptureMoves :: [Move] -> ([Move], [Move], [Move])
     partitionAndSortCaptureMoves moves =
@@ -156,13 +153,13 @@ foldHorizonEval cache depth board (move : rest) alpha beta = do
 foldHorizonEval _ _ _ [] alpha _ = return alpha
 
 evaluate'' :: ChessCache s -> EvaluateParams -> [(Move, ChessBoard)] -> ST s ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
-evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, board, nodesParsed, allowNullMove} candidates
+evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, nodesParsed, allowNullMove} candidates
   | null candidates =
       let eval = outOfMovesEval board
-       in return ((eval, moves, Nothing), nodesParsed, Exact)
+       in return ((eval, [], Nothing), nodesParsed, Exact)
   | depth <= 0 = do
       eval <- {-# SCC "m_horizonEval" #-} horizonEval cache 10 board alpha beta
-      return ((eval, moves, Nothing), nodesParsed, Exact)
+      return ((eval, [], Nothing), nodesParsed, Exact)
   | otherwise = do 
     foldCandidates cache candidates
   where
@@ -178,7 +175,6 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
           let params' =
                 params
                   { allowNullMove = False,
-                    moves = [],
                     depth = depth - 3, -- R = 2
                     board = candidateBoard {turn = if (turn board) == White then Black else White},
                     nodesParsed = nodesParsed,
@@ -189,23 +185,21 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
             return ((negateEval v, moves), nodes)
           if (fst moveValue) > beta
             then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, moves ++ [candidateMove], Just candidateMove), newNodesParsed, LowerBound)
+              return ((beta, [candidateMove], Just candidateMove), newNodesParsed, LowerBound)
             else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
       -- evaluate with reduced depth (LMR).
       | not lmrTried && siblingIndex > 1 && (maxDepth - depth) > 1 && not (isCaptureMove board candidateMove) = do
-          let newMovesPath = moves ++ [candidateMove]
-              params' =
+          let params' =
                 params
-                  { moves = newMovesPath,
-                    depth = (depth - 2), -- subtract 2 to lower depth search in fringe node
+                  { depth = (depth - 2), -- subtract 2 to lower depth search in fringe node
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
                     beta = negateEval alpha }
           evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, moves, Just candidateMove), nodes)
+          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves, Just candidateMove), nodes)
           if eval > bestEval
             then -- if found better move, re-evaluate with proper depth
               (foldCandidates' cache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, True, nullWindowTried) newNodesParsed)
@@ -213,36 +207,30 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
 
       | (not nullWindowTried) && not first = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 0.0001)
-              newMovesPath = moves ++ [candidateMove]
               params' =
                 params
-                  { moves = newMovesPath,
-                    depth = (depth - 1),
+                  { depth = (depth - 1),
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval nullBeta,
                     beta = negateEval alpha }
           evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, moves, Just candidateMove), nodes)
+          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves, Just candidateMove), nodes)
           if eval > bestEval
             then -- found better with reduced window: do full search
               (foldCandidates' cache False bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, True) newNodesParsed)
-            else do 
-                -- record found upper bound (? is this correct???)
-                -- putValue cache candidateBoard (depth - 1) (fst moveValue) UpperBound
-                (foldCandidates' cache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
+            else  
+              (foldCandidates' cache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
       | otherwise = do
-          let newMovesPath = moves ++ [candidateMove]
-              params' =
+          let params' =
                 params
-                  { moves = newMovesPath,
-                    depth = (depth - 1),
+                  { depth = (depth - 1),
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
                     beta = negateEval alpha }
           evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, moves, Just candidateMove), nodes)
+          let (moveValue@(eval, _, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves, Just candidateMove), nodes)
               newBestMoveValue =
                 if (first || eval > bestEval)
                   then moveValue
@@ -256,8 +244,7 @@ evaluateIteration :: ChessCache s -> ChessBoard -> (PositionEval, [Move]) -> Int
 evaluateIteration cache board lastDepthBest depth =
   let params =
         EvaluateParams
-          { moves = [],
-            alpha = PositionEval $ (-1) / 0,
+          { alpha = PositionEval $ (-1) / 0,
             beta = PositionEval $ 1 / 0,
             depth = depth,
             maxDepth = depth,
