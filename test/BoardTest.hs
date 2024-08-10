@@ -34,6 +34,14 @@ instance Arbitrary ChessBoard where
     moveCount <- chooseInt (0, 100)
     iterate (>>= applyRandomMove) (pure initialBoard) !! moveCount
 
+instance Arbitrary UnpackedMove where
+  arbitrary = do
+    fromCol <- chooseInt (1, 8)
+    fromRow <- chooseInt (1, 8)
+    toCol <- chooseInt (1, 8) `suchThat` \x -> x /= fromCol
+    toRow <- chooseInt (1, 8) `suchThat` \y -> y /= fromRow
+    return $ UnpackedMove fromCol fromRow toCol toRow NoPromo
+
 -- PROPERTY TESTS -------------------------------------
 
 prop_changeturn =
@@ -43,6 +51,9 @@ prop_changeturn =
           (move, board') -> (turn board) /= (turn board')
       )
       $ candidateMoves board
+
+prop_movepacking = 
+    \move -> move === (unpackMove $ packMove move)
 
 -- EXAMPLE TESTS --------------------------------------
 
@@ -61,16 +72,16 @@ unitTests =
         parseUCICommand "quit" @?= Just Quit
         parseUCICommand "position startpos" @?= Just (Position initialBoard)
         parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
-        parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (Move 5 2 5 4 Nothing))
+        parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (packMove (UnpackedMove 5 2 5 4 NoPromo)))
         parseUCICommand "go depth 6" @?= Just (Go emptyGoProps {depth = Just 6}),
 
       testCase "Candidates moves" $ do
         -- test en pessant works
-        candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (Move 5 5 4 6 Nothing) @?= True
+        candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (packMove (UnpackedMove 5 5 4 6 NoPromo)) @?= True
         -- regression test, king trying to capture protected pieces
-        candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (Move 5 3 6 3 Nothing) @?= False
+        candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (packMove (UnpackedMove 5 3 6 3 NoPromo)) @?= False
         -- regression test, check if it knows how to promote with capture
-        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (Move 4 7 3 8 (Just PromoQueen)) @?= True,
+        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (packMove (UnpackedMove 4 7 3 8 PromoQueen)) @?= True,
 
       testCase "Precomputed rays" $ do
         elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True
