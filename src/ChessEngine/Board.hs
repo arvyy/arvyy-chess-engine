@@ -7,10 +7,13 @@ module ChessEngine.Board
   ( ChessPieceType (..),
     PlayerColor (..),
     ChessPiece (..),
-    Move (..),
-    UnpackedMove (..),
-    unpackMove,
-    packMove,
+    Move,
+    createMove,
+    fromCol,
+    fromRow,
+    toCol,
+    toRow,
+    promotion,
     PromoChessPieceType (..),
     ChessBoard (..),
     ChessBoardPositions (..),
@@ -191,39 +194,43 @@ instance Hashable ChessBoardPositions
 instance Hashable ChessBoard
 
 data PromoChessPieceType = NoPromo | PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq, Enum)
-data UnpackedMove = UnpackedMove
-  { fromCol :: !Int,
-    fromRow :: !Int,
-    toCol :: !Int,
-    toRow :: !Int,
-    promotion :: !PromoChessPieceType
-  }
-  deriving (Show, Eq)   
 
 newtype Move = Move Int64 deriving (Eq)
 
 instance Show Move
-    where show move = case moveToString move of 
+    where show move@(Move bitRepr) = case moveToString move of 
                         Just str -> str
-                        _ -> show $ unpackMove move
+                        _ -> "<Invalid move " ++ (show bitRepr) ++ ">"
     
 
-{-# INLINE packMove #-}
-packMove :: UnpackedMove -> Move
-packMove UnpackedMove{ fromCol, fromRow, toCol, toRow, promotion } =
+{-# INLINE createMove #-}
+createMove :: Int -> Int -> Int -> Int -> PromoChessPieceType -> Move
+createMove fromCol fromRow toCol toRow promotion =
     let promo = fromIntegral $ fromEnum promotion
         bitRepr = (shiftL promo 12) .|. (shiftL (fromCol - 1) 9) .|. (shiftL (fromRow - 1) 6) .|. (shiftL (toCol - 1) 3) .|. (toRow - 1)
     in Move (fromIntegral bitRepr)
 
-{-# INLINE unpackMove #-}
-unpackMove :: Move -> UnpackedMove
-unpackMove (Move bitRepr) =
-    let promo = toEnum $ fromIntegral (shiftR bitRepr 12)
-        fromCol = (fromIntegral $ (shiftR bitRepr 9) .&. 7) + 1
-        fromRow = (fromIntegral $ (shiftR bitRepr 6) .&. 7) + 1
-        toCol = (fromIntegral $ (shiftR bitRepr 3) .&. 7) + 1
-        toRow = (fromIntegral $ bitRepr .&. 7) + 1
-    in UnpackedMove fromCol fromRow toCol toRow promo
+{-# INLINE fromCol #-}
+fromCol :: Move -> Int
+fromCol (Move bitRepr) = (fromIntegral $ (shiftR bitRepr 9) .&. 7) + 1
+
+{-# INLINE fromRow #-}
+fromRow :: Move -> Int
+fromRow (Move bitRepr) = (fromIntegral $ (shiftR bitRepr 6) .&. 7) + 1
+
+{-# INLINE toCol #-}
+toCol :: Move -> Int
+toCol (Move bitRepr) = (fromIntegral $ (shiftR bitRepr 3) .&. 7) + 1
+
+{-# INLINE toRow #-}
+toRow :: Move -> Int
+toRow (Move bitRepr) = (fromIntegral $ bitRepr .&. 7) + 1
+
+promotion :: Move -> PromoChessPieceType
+promotion (Move bitRepr) = toEnum $ fromIntegral (shiftR bitRepr 12)
+
+moveToTuple :: Move -> (Int, Int, Int, Int, PromoChessPieceType)
+moveToTuple move = (fromCol move, fromRow move, toCol move, toRow move, promotion move)
 
 boardPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
 boardPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn, Bishop, Horse, Rock, Queen, King]
@@ -276,12 +283,16 @@ parseMove (x : y : x' : y' : rest) = do
     ['q'] -> Just PromoQueen
     ['r'] -> Just PromoRock
     _ -> Nothing
-  return $ packMove (UnpackedMove (fst fromSquare) (snd fromSquare) (fst toSquare) (snd toSquare) promotion)
+  return $ createMove (fst fromSquare) (snd fromSquare) (fst toSquare) (snd toSquare) promotion
 parseMove _ = Nothing
 
 moveToString :: Move -> Maybe String
 moveToString move = do
-  let (UnpackedMove fromx fromy tox toy promo) = unpackMove move
+  let fromx = fromCol move
+  let fromy = fromRow move
+  let tox = toCol move
+  let toy = toRow move
+  let promo = promotion move
   from <- squareReferenceToString (fromx, fromy)
   to <- squareReferenceToString (tox, toy)
   let promoStr = case promo of
@@ -395,7 +406,7 @@ applyMoveUnsafe board move =
           blackQueenCastle = blackQueenCastle'
         }
   where
-    (UnpackedMove x y x' y' promotion) = unpackMove move
+    (x, y, x', y', promotion) = moveToTuple move
     applyKingCastle :: ChessBoardPositions -> PlayerColor -> ChessBoardPositions
     applyKingCastle positions color =
       let p1 = clearPosition positions 5 y
@@ -579,8 +590,8 @@ pawnCandidateMoves board x y player =
           _ -> []
         if promotesOnMove
           then do
-            packMove . UnpackedMove x y x' y' <$> [PromoHorse, PromoRock, PromoQueen, PromoBishop, PromoHorse]
-          else return $ packMove (UnpackedMove x y x' y' NoPromo)
+            createMove x y x' y' <$> [PromoHorse, PromoRock, PromoQueen, PromoBishop, PromoHorse]
+          else return $ createMove x y x' y' NoPromo
       enPassantCaptures = do
         x' <- [x - 1, x + 1]
         x' <- ([x' | inBounds x' y'])
@@ -588,17 +599,17 @@ pawnCandidateMoves board x y player =
         x' <- case enPassant board of
           Just col -> ([x' | col == x'])
           _ -> []
-        return $ packMove (UnpackedMove x y x' y' NoPromo)
+        return $ createMove x y x' y' NoPromo
       doubleDipMove =
         let doubleAheadIsClear =
               inBounds x (y + 2 * dir) && case pieceOnSquare board x (y + 2 * dir) of
                 Just _ -> False
                 Nothing -> True
             canDoubleDip = inStartingPos && aheadIsClear && doubleAheadIsClear
-         in ([packMove $ UnpackedMove x y x (y + 2 * dir) NoPromo | canDoubleDip])
+         in ([createMove x y x (y + 2 * dir) NoPromo | canDoubleDip])
       singleMove
-        | aheadIsClear && not promotesOnMove = [packMove $ UnpackedMove x y x (y + dir) NoPromo]
-        | aheadIsClear && promotesOnMove = map (\promotion -> packMove $ UnpackedMove x y x (y + dir) promotion) [PromoHorse, PromoRock, PromoQueen, PromoBishop]
+        | aheadIsClear && not promotesOnMove = [createMove x y x (y + dir) NoPromo]
+        | aheadIsClear && promotesOnMove = map (\promotion -> createMove x y x (y + dir) promotion) [PromoHorse, PromoRock, PromoQueen, PromoBishop]
         | otherwise = []
    in normalCaptures ++ enPassantCaptures ++ doubleDipMove ++ singleMove
 
@@ -629,17 +640,17 @@ canCastleQueenSide board color =
 kingCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 kingCandidateMoves board x y player =
   let baseMoves =
-        map (\(x', y') -> packMove (UnpackedMove x y x' y' NoPromo)) $
+        map (\(x', y') -> createMove x y x' y' NoPromo) $
           pieceThreats board (x, y, ChessPiece player King)
-      castleKingSide = ([packMove $ UnpackedMove x y 7 y NoPromo | canCastleKingSide board player])
-      castleQueenSide = ([packMove $ UnpackedMove x y 3 y NoPromo | canCastleQueenSide board player])
+      castleKingSide = ([createMove x y 7 y NoPromo | canCastleKingSide board player])
+      castleQueenSide = ([createMove x y 3 y NoPromo | canCastleQueenSide board player])
    in baseMoves ++ castleKingSide ++ castleQueenSide
 
 pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
 pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color
 pieceCandidateMoves board piece@(x, y, _) = map
-        (\(x', y') -> packMove $ UnpackedMove x y x' y' NoPromo)
+        (\(x', y') -> createMove x y x' y' NoPromo)
         (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
@@ -665,13 +676,11 @@ candidateMoveLegal board candidate =
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition (pieces board) player
     movePotentiallyBreakingPin move =
-        let UnpackedMove {fromCol, fromRow} = unpackMove move
-        in fromRow == king_y
-            || fromCol == king_x
-            || abs (fromRow - king_y) == abs (fromCol - king_x)
+        fromRow move == king_y
+            || fromCol move == king_x
+            || abs (fromRow move - king_y) == abs (fromCol move - king_x)
     isKingMove move =
-      let UnpackedMove {fromCol, fromRow} = unpackMove move
-      in fromRow == king_y && fromCol == king_x
+        fromRow move == king_y && fromCol move == king_x
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
@@ -681,8 +690,7 @@ applyMove board move = do
 
 isCaptureMove :: ChessBoard -> Move -> Bool
 isCaptureMove board move =
-  let UnpackedMove {toCol, toRow} = unpackMove move
-  in case pieceOnSquare board toCol toRow of
+  case pieceOnSquare board (toCol move) (toRow move) of
         Just _ -> True
         _ -> False
 

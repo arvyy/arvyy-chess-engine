@@ -58,7 +58,7 @@ evaluate' cache params@EvaluateParams {moves, board, depth = depth', nodesParsed
         case maybeBestMove of
             Just bestMove -> putValue cache board depth eval' bound bestMove
             _ -> return ()
-        let result = ((eval', {-moves'-} maybeToList maybeBestMove), nodes + 1)
+        let result = ((eval', moves'), nodes + 1)
         return result
   case tableHit of
     Just (TranspositionValue bound eval cachedDepth bestMove) ->
@@ -67,7 +67,7 @@ evaluate' cache params@EvaluateParams {moves, board, depth = depth', nodesParsed
       else if ((bound == Exact) ||
                (bound == LowerBound && eval > beta) ||
                (bound == UpperBound && eval < alpha))
-      then return ((eval, {-moves-} [bestMove]), nodesParsed)
+      then return ((eval, moves ++ [bestMove]), nodesParsed)
       else doSearch
     Nothing -> doSearch
 
@@ -100,10 +100,9 @@ sortCandidates cache board alpha depth candidates =
 
     augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
     augmentWithCaptureInfo move =
-        let UnpackedMove { fromCol, fromRow, toCol, toRow } = unpackMove move
-            diff = do 
-                (ChessPiece _ capturedType) <- pieceOnSquare board toCol toRow
-                (ChessPiece _ capturingType) <- pieceOnSquare board fromCol fromRow
+        let diff = do 
+                (ChessPiece _ capturedType) <- pieceOnSquare board (toCol move) (toRow move)
+                (ChessPiece _ capturingType) <- pieceOnSquare board (fromCol move) (fromRow move)
                 return $ captureScore capturingType - captureScore capturedType
         in (move, diff)
     
@@ -138,8 +137,7 @@ horizonEval cache depth board alpha beta
     deltaBuffer = 2.0
     examineMove :: PositionEval -> Move -> Bool
     examineMove pat move =
-      let UnpackedMove { toCol, toRow } = unpackMove move
-      in case pieceOnSquare board toCol toRow of
+      case pieceOnSquare board (toCol move) (toRow move) of
             Just (ChessPiece _ Pawn) -> evalAdd pat (1 + deltaBuffer) > alpha
             Just (ChessPiece _ Bishop) -> evalAdd pat (3 + deltaBuffer) > alpha
             Just (ChessPiece _ Horse) -> evalAdd pat (3 + deltaBuffer) > alpha
@@ -191,13 +189,13 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
             return ((negateEval v, moves), nodes)
           if (fst moveValue) > beta
             then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, {-moves ++ [candidateMove]-} [], Just candidateMove), newNodesParsed, LowerBound)
+              return ((beta, moves ++ [candidateMove], Just candidateMove), newNodesParsed, LowerBound)
             else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
       -- evaluate with reduced depth (LMR).
       | not lmrTried && siblingIndex > 1 && (maxDepth - depth) > 1 && not (isCaptureMove board candidateMove) = do
-          let newMovesPath = {-moves ++ [candidateMove]-} []
+          let newMovesPath = moves ++ [candidateMove]
               params' =
                 params
                   { moves = newMovesPath,
@@ -215,7 +213,7 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
 
       | (not nullWindowTried) && not first = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 0.0001)
-              newMovesPath = {-moves ++ [candidateMove]-} []
+              newMovesPath = moves ++ [candidateMove]
               params' =
                 params
                   { moves = newMovesPath,
@@ -234,7 +232,7 @@ evaluate'' cache params@EvaluateParams {moves, alpha, beta, depth, maxDepth, boa
                 -- putValue cache candidateBoard (depth - 1) (fst moveValue) UpperBound
                 (foldCandidates' cache False bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
       | otherwise = do
-          let newMovesPath = {-moves ++ [candidateMove]-} []
+          let newMovesPath = moves ++ [candidateMove]
               params' =
                 params
                   { moves = newMovesPath,
