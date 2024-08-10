@@ -14,7 +14,8 @@ Operates through UCI. Features:
 8. Piece-square tables valuation;
 9. Mobility valuation;
 10. Pawn structure valuation;
-11. Quiescence search (including Delta pruning)
+11. Quiescence search (including Delta pruning);
+12. Killer moves;
 
 == Building and running
 

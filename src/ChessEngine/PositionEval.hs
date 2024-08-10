@@ -31,6 +31,7 @@ outOfMovesEval board =
 data EvaluateParams = EvaluateParams
   { alpha :: !PositionEval,
     beta :: !PositionEval,
+    ply :: !Int,
     depth :: !Int,
     maxDepth :: !Int,
     board :: !ChessBoard,
@@ -47,13 +48,17 @@ data EvaluateResult = EvaluateResult
   deriving (Show)
 
 evaluate' :: ChessCache s -> EvaluateParams -> ST s ((PositionEval, [Move]), Int)
-evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta } = do
+evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply } = do
   let depth = max depth' 0
   tableHit <- getValue cache board
   let doSearch = do
-        sortedCandidates <- sortCandidates cache board alpha depth (pseudoLegalCandidateMoves board)
+        sortedCandidates <- sortCandidates cache board ply (pseudoLegalCandidateMoves board)
         let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
         ((eval', moves', bestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
+        when (bound == LowerBound) $
+             case moves' of
+                move : _ -> putKillerMove cache ply move
+                _ -> return ()
         putValue cache board depth eval' bound moves'
         let result = ((eval', moves'), nodes + 1)
         return result
@@ -68,12 +73,12 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
       else doSearch
     Nothing -> doSearch
 
-sortCandidates :: ChessCache s -> ChessBoard -> PositionEval -> Int -> [Move] -> ST s [Move]
-sortCandidates cache board alpha depth candidates =
+sortCandidates :: ChessCache s -> ChessBoard -> Int -> [Move] -> ST s [Move]
+sortCandidates cache board ply candidates =
     do
         (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves cache candidates
         let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves otherMoves
-        (killerMoves, otherMoves'') <- partitionKillerMoves cache depth otherMoves'
+        (killerMoves, otherMoves'') <- partitionKillerMoves cache otherMoves'
         return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
   where
     partitionAndSortCacheMoves :: ChessCache s -> [Move] -> ST s ([Move], [Move])
@@ -111,11 +116,10 @@ sortCandidates cache board alpha depth candidates =
     captureScore Queen = 9
     captureScore King = 999
 
-    partitionKillerMoves :: ChessCache s -> Int -> [Move] -> ST s ([Move], [Move])
-    partitionKillerMoves cache depth moves =
-        -- TODO implement killer moves
-        return ([], moves)
-            
+    partitionKillerMoves :: ChessCache s -> [Move] -> ST s ([Move], [Move])
+    partitionKillerMoves cache moves = do
+        killers <- getKillerMoves cache ply
+        return $ partition (\m -> elem m killers) moves
 
 horizonEval :: ChessCache s -> Int -> ChessBoard -> PositionEval -> PositionEval -> ST s PositionEval
 horizonEval cache depth board alpha beta
@@ -153,7 +157,7 @@ foldHorizonEval cache depth board (move : rest) alpha beta = do
 foldHorizonEval _ _ _ [] alpha _ = return alpha
 
 evaluate'' :: ChessCache s -> EvaluateParams -> [(Move, ChessBoard)] -> ST s ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
-evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, nodesParsed, allowNullMove} candidates
+evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove} candidates
   | null candidates =
       let eval = outOfMovesEval board
        in return ((eval, [], Nothing), nodesParsed, Exact)
@@ -175,6 +179,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, no
           let params' =
                 params
                   { allowNullMove = False,
+                    ply = ply + 1,
                     depth = depth - 3, -- R = 2
                     board = candidateBoard {turn = if (turn board) == White then Black else White},
                     nodesParsed = nodesParsed,
@@ -194,6 +199,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, no
           let params' =
                 params
                   { depth = (depth - 2), -- subtract 2 to lower depth search in fringe node
+                    ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
@@ -210,6 +216,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, no
               params' =
                 params
                   { depth = (depth - 1),
+                    ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval nullBeta,
@@ -225,6 +232,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, no
           let params' =
                 params
                   { depth = (depth - 1),
+                    ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
@@ -248,6 +256,7 @@ evaluateIteration cache board lastDepthBest depth =
             beta = PositionEval $ 1 / 0,
             depth = depth,
             maxDepth = depth,
+            ply = 0,
             board = board,
             nodesParsed = 0,
             currentBest = lastDepthBest,
