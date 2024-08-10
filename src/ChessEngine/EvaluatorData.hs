@@ -30,18 +30,18 @@ evalAdd (PositionEval v) added = (PositionEval $ v + added)
 
 data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
-data TranspositionValue = TranspositionValue TableValueBound PositionEval Int deriving (Show)
+data TranspositionValue = TranspositionValue TableValueBound PositionEval Int Move deriving (Show)
 type TranspositionTable s = Map.HashTable s ChessBoard TranspositionValue
 type PawnTable s = Map.HashTable s Int64 Float
 data ChessCache s = ChessCache (TranspositionTable s) (PawnTable s)
 
-putValue :: ChessCache s -> ChessBoard -> Int -> PositionEval -> TableValueBound -> ST s ()
-putValue (ChessCache table _) board depth value bound = do
+putValue :: ChessCache s -> ChessBoard -> Int -> PositionEval -> TableValueBound -> Move -> ST s ()
+putValue (ChessCache table _) board depth value bound move = do
   existingValue <- Map.lookup table board
   case existingValue of
-    Just (TranspositionValue _ _ prevDepth) ->
-      when (depth >= prevDepth) $ Map.insert table board (TranspositionValue bound value depth)
-    Nothing -> Map.insert table board (TranspositionValue bound value depth)
+    Just (TranspositionValue _ _ prevDepth _) ->
+      when (depth >= prevDepth) $ Map.insert table board (TranspositionValue bound value depth move)
+    Nothing -> Map.insert table board (TranspositionValue bound value depth move)
 
 getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
 getValue (ChessCache table _) board = Map.lookup table board
