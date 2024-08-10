@@ -180,12 +180,12 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, board, no
                     nodesParsed = nodesParsed,
                     alpha = negateEval beta,
                     beta = negateEval alpha }
-          (moveValue, newNodesParsed) <- do
+          ((moveValue, moves), newNodesParsed) <- do
             ((v, moves), nodes) <- evaluate' cache params'
             return ((negateEval v, moves), nodes)
-          if (fst moveValue) > beta
+          if moveValue > beta
             then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, [candidateMove], Just candidateMove), newNodesParsed, LowerBound)
+              return ((beta, candidateMove : moves, Just candidateMove), newNodesParsed, LowerBound)
             else (foldCandidates' cache first bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
