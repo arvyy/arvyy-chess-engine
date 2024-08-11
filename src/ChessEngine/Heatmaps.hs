@@ -41,8 +41,8 @@ piecePositionBonus x y (ChessPiece player pieceType) =
 -------------------
 -- Generated heatmap tables
 
-bishop_heatmap_indexes =
-  [ 136,
+bishop_heatmap_indexes = [
+    136,
     136,
     136,
     136,
@@ -106,10 +106,12 @@ bishop_heatmap_indexes =
     0,
     68,
     68
-  ]
+    ]
 
-king_heatmap_indexes =
-  [ 68,
+
+
+king_heatmap_indexes = [
+    68,
     68,
     68,
     68,
@@ -167,16 +169,18 @@ king_heatmap_indexes =
     0,
     68,
     255,
-    204,
     0,
     0,
-    136,
+    0,
+    0,
     255,
     136
-  ]
+    ]
 
-horse_heatmap_indexes =
-  [ 0,
+
+
+horse_heatmap_indexes = [
+    0,
     0,
     68,
     0,
@@ -240,10 +244,12 @@ horse_heatmap_indexes =
     68,
     0,
     0
-  ]
+    ]
 
-rock_heatmap_indexes =
-  [ 255,
+
+
+rock_heatmap_indexes = [
+    255,
     255,
     255,
     255,
@@ -307,10 +313,12 @@ rock_heatmap_indexes =
     255,
     204,
     204
-  ]
+    ]
 
-pawn_heatmap_indexes =
-  [ 255,
+
+
+pawn_heatmap_indexes = [
+    255,
     255,
     255,
     255,
@@ -344,10 +352,10 @@ pawn_heatmap_indexes =
     204,
     136,
     136,
-    68,
-    68,
-    68,
-    68,
+    136,
+    136,
+    136,
+    136,
     136,
     136,
     136,
@@ -374,4 +382,7 @@ pawn_heatmap_indexes =
     0,
     0,
     0
-  ]
+    ]
+
+
+

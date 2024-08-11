@@ -102,7 +102,7 @@ scorePieceThreats board piece =
         -- TODO fix this by punishing evaluation for pieces being in starting position?
         (_, _, ChessPiece _ Queen) -> 0.5
         _ -> 1.0
-   in (log (ownSide + 1.0) * 0.1 + log (opponentSide + 1.0) * 0.11) * typeMultiplier
+   in (log (ownSide + 1.0) * 0.01 + log (opponentSide + 1.0) * 0.02) * typeMultiplier
 
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
@@ -114,5 +114,6 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
         Horse -> 0.5
         Rock -> 0.2
         Queen -> 0.0
+        _ -> 0.0
       score = (squareRating ** 1.8) * maxBonus
    in score
