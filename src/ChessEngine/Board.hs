@@ -564,10 +564,13 @@ playerPotentiallyPinned board player =
            else False
     checkRayPin [] _ _ = False
 
-
 {-# INLINE playerInCheck #-}
-playerInCheck :: ChessBoard -> PlayerColor -> Bool
-playerInCheck board player =
+playerInCheck :: ChessBoard -> Bool
+playerInCheck board = playerInCheck' board (turn board)
+
+{-# INLINE playerInCheck' #-}
+playerInCheck' :: ChessBoard -> PlayerColor -> Bool
+playerInCheck' board player =
   let (x, y) = playerKingPosition (pieces board) player
    in squareUnderThreat board player x y
 
@@ -666,13 +669,13 @@ pseudoLegalCandidateMoves board = {-# SCC "m_pseudoLegalCandidateMoves" #-}
 candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
-      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck board' player
+      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck' board' player
   in if not inCheck
      then return board'
      else Nothing
   where
     player = turn board
-    wasInCheck = playerInCheck board player
+    wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition (pieces board) player
     movePotentiallyBreakingPin move =

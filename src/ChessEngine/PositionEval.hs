@@ -22,8 +22,7 @@ import Debug.Trace
 -- end of the game
 outOfMovesEval :: ChessBoard -> PositionEval
 outOfMovesEval board =
-  let player = (turn board)
-      inCheck = playerInCheck board player
+  let inCheck = playerInCheck board
    in if (not inCheck)
         then PositionEval 0
         else PositionEval $ (-1) / 0
@@ -57,7 +56,7 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
         ((eval', moves', bestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
         when (bound == LowerBound) $
              case moves' of
-                move : _ -> putKillerMove cache ply move
+                move : _ -> when (not $ isCaptureMove board move) $ putKillerMove cache ply move
                 _ -> return ()
         putValue cache board depth eval' bound moves'
         let result = ((eval', moves'), nodes + 1)
@@ -77,7 +76,7 @@ sortCandidates :: ChessCache s -> ChessBoard -> Int -> [Move] -> ST s [Move]
 sortCandidates cache board ply candidates =
     do
         (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves cache candidates
-        let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves otherMoves
+        let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
         (killerMoves, otherMoves'') <- partitionKillerMoves cache otherMoves'
         return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
   where
@@ -88,56 +87,60 @@ sortCandidates cache board ply candidates =
             Just (TranspositionValue _ _ _ (move : _)) -> partition (\m -> move == m) moves
             _ -> ([], moves)
 
-    partitionAndSortCaptureMoves :: [Move] -> ([Move], [Move], [Move])
-    partitionAndSortCaptureMoves moves =
-        let augmentedMoves = augmentWithCaptureInfo <$> moves
-            (captureMoves, otherMoves) = partition (\(_, capture) -> isJust capture) augmentedMoves
-            (goodCaptures, badCaptures) = partition (\(_, Just n) -> n >= 0) captureMoves
-            removeCaptureInfo (move, _) = move
-            captureMoveComparator (_, Just v1) (_, Just v2) = compare v1 v2
-            goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
-            badCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) badCaptures)
-            otherMoves' = removeCaptureInfo <$> otherMoves
-        in (goodCaptures', badCaptures', otherMoves')
-
-    augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
-    augmentWithCaptureInfo move =
-        let diff = do 
-                (ChessPiece _ capturedType) <- pieceOnSquare board (toCol move) (toRow move)
-                (ChessPiece _ capturingType) <- pieceOnSquare board (fromCol move) (fromRow move)
-                return $ captureScore capturingType - captureScore capturedType
-        in (move, diff)
-    
-    captureScore :: ChessPieceType -> Int
-    captureScore Pawn = 1
-    captureScore Horse = 3
-    captureScore Bishop = 3
-    captureScore Rock = 5
-    captureScore Queen = 9
-    captureScore King = 999
-
     partitionKillerMoves :: ChessCache s -> [Move] -> ST s ([Move], [Move])
     partitionKillerMoves cache moves = do
         killers <- getKillerMoves cache ply
         return $ partition (\m -> elem m killers) moves
 
+partitionAndSortCaptureMoves :: ChessBoard -> [Move] -> ([Move], [Move], [Move])
+partitionAndSortCaptureMoves board moves = {-# SCC "m_partitionAndSortCaptureMoves" #-}
+    let augmentedMoves = augmentWithCaptureInfo <$> moves
+        (captureMoves, otherMoves) = partition (\(_, capture) -> isJust capture) augmentedMoves
+        (goodCaptures, badCaptures) = partition (\(_, Just n) -> n >= 0) captureMoves
+        removeCaptureInfo (move, _) = move
+        captureMoveComparator (_, Just v1) (_, Just v2) = compare v1 v2
+        goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
+        badCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) badCaptures)
+        otherMoves' = removeCaptureInfo <$> otherMoves
+    in (goodCaptures', badCaptures', otherMoves')
+
+    where
+        captureScore :: ChessPieceType -> Int
+        captureScore Pawn = 1
+        captureScore Horse = 3
+        captureScore Bishop = 3
+        captureScore Rock = 5
+        captureScore Queen = 9
+        captureScore King = 999
+
+        augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
+        augmentWithCaptureInfo move =
+            let diff = do 
+                    (ChessPiece _ capturedType) <- pieceOnSquare board (toCol move) (toRow move)
+                    (ChessPiece _ capturingType) <- pieceOnSquare board (fromCol move) (fromRow move)
+                    return $ captureScore capturedType - captureScore capturingType
+            in (move, diff)
+
 horizonEval :: ChessCache s -> Int -> ChessBoard -> PositionEval -> PositionEval -> ST s PositionEval
-horizonEval cache depth board alpha beta
-  | depth <= 0 = finalDepthEval cache board
-  | otherwise = do
-      pat <- finalDepthEval cache board
-      let alpha' = max alpha pat
-      let capturingMoves = (filter (\move -> (examineMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
-      if pat >= beta
-        then return beta
-        else foldHorizonEval cache depth board capturingMoves alpha' beta
+horizonEval cache depth board alpha beta =  {-# SCC "m_horizonEval" #-}
+      if playerInCheck board
+      then {-# SCC "m_horizonEval_incheck" #-}
+          let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+          in foldHorizonEval cache depth board moves alpha beta
+      else {-# SCC "m_horizonEval_not_incheck" #-} do
+          pat <- finalDepthEval cache board
+          let alpha' = max alpha pat
+          let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+          if pat >= beta
+            then return pat
+            else foldHorizonEval cache depth board capturingMoves alpha' beta
   where
-    -- examine only captures
+    -- examine only captures when not in check
     -- apply "delta pruning", only consider captures
     -- where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
     deltaBuffer = 2.0
-    examineMove :: PositionEval -> Move -> Bool
-    examineMove pat move =
+    examineCaptureMove :: PositionEval -> Move -> Bool
+    examineCaptureMove pat move =
       case pieceOnSquare board (toCol move) (toRow move) of
             Just (ChessPiece _ Pawn) -> evalAdd pat (1 + deltaBuffer) > alpha
             Just (ChessPiece _ Bishop) -> evalAdd pat (3 + deltaBuffer) > alpha
@@ -145,14 +148,17 @@ horizonEval cache depth board alpha beta
             Just (ChessPiece _ Rock) -> evalAdd pat (5 + deltaBuffer) > alpha
             Just (ChessPiece _ Queen) -> evalAdd pat (9 + deltaBuffer) > alpha
             _ -> False
-
+    
+    sortMoves moves =
+        let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
+        in goodCaptures ++ badCaptures ++ other
 
 foldHorizonEval :: ChessCache s -> Int -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> ST s PositionEval
 foldHorizonEval cache depth board (move : rest) alpha beta = do
   value <- negateEval <$> horizonEval cache (depth - 1) (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
   let alpha' = max alpha value
   if value >= beta
-    then return beta
+    then return value
     else foldHorizonEval cache depth board rest alpha' beta
 foldHorizonEval _ _ _ [] alpha _ = return alpha
 
@@ -162,7 +168,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
       let eval = outOfMovesEval board
        in return ((eval, [], Nothing), nodesParsed, Exact)
   | depth <= 0 = do
-      eval <- {-# SCC "m_horizonEval" #-} horizonEval cache 10 board alpha beta
+      eval <- horizonEval cache 10 board alpha beta
       return ((eval, [], Nothing), nodesParsed, Exact)
   | otherwise = do 
     foldCandidates cache candidates
@@ -175,7 +181,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates' cache first bestMoveValue@(bestEval, _, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, nullWindowTried) nodesParsed
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
       -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
-      | not nullMoveTried && allowNullMove && depth < 4 && (not $ playerInCheck candidateBoard (turn candidateBoard)) = do
+      | not nullMoveTried && allowNullMove && depth < 4 && (not $ playerInCheck candidateBoard) = do
           let params' =
                 params
                   { allowNullMove = False,
