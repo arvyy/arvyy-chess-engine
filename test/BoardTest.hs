@@ -70,7 +70,9 @@ unitTests =
         -- regression test, king trying to capture protected pieces
         candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (createMove 5 3 6 3 NoPromo) @?= False
         -- regression test, check if it knows how to promote with capture
-        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (createMove 4 7 3 8 PromoQueen) @?= True,
+        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (createMove 4 7 3 8 PromoQueen) @?= True
+        -- regression test, check if king doesn't try to castle after having rook captured
+        candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo) @?= False,
 
       testCase "Precomputed rays" $ do
         elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True

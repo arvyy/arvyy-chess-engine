@@ -368,34 +368,45 @@ applyMoveUnsafe board move =
         | isKingCastleMove = applyKingCastle oldPieces player
         | isQueenCastleMove = applyQueenCastle oldPieces player
         | otherwise = applyNormalMove oldPieces player pieceType
+      whiteKingRockTooken = (player == Black && x' == 8 && y' == 1)
       whiteKingCastle' =
-        not (isCastleMove && player == White)
-          && whiteKingCastle board
+          whiteKingCastle board
+          && not (isCastleMove && player == White)
           && case (player, pieceType) of
             (White, King) -> False
             (White, Rock) -> not (x == 8 && y == 1)
             _ -> True
+          && not whiteKingRockTooken
+
+      whiteQueenRockTooken = (player == Black && x' == 1 && y' == 1)
       whiteQueenCastle' =
-        not (isCastleMove && player == White)
-          && whiteQueenCastle board
+          whiteQueenCastle board
+          && not (isCastleMove && player == White)
           && case (player, pieceType) of
             (White, King) -> False
             (White, Rock) -> not (x == 1 && y == 1)
             _ -> True
+          && not whiteQueenRockTooken
+
+      blackKingRockTooken = (player == White && x' == 8 && y' == 8)
       blackKingCastle' =
-        not (isCastleMove && player == Black)
-          && blackKingCastle board
+          blackKingCastle board
+          && not (isCastleMove && player == Black)
           && case (player, pieceType) of
             (Black, King) -> False
             (Black, Rock) -> not (x == 8 && y == 8)
             _ -> True
+          && not blackKingRockTooken
+
+      blackQueenRockTooken = (player == White && x' == 1 && y' == 8)
       blackQueenCastle' =
-        not (isCastleMove && player == Black)
-          && blackQueenCastle board
+          blackQueenCastle board
+          && not (isCastleMove && player == Black)
           && case (player, pieceType) of
             (Black, King) -> False
             (Black, Rock) -> not (x == 1 && y == 8)
             _ -> True
+          && not blackQueenRockTooken
    in board
         { pieces = newPieces,
           enPassant = if isDoubleDipMove then Just x else Nothing,

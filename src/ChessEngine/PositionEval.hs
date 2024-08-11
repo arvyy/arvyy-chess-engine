@@ -126,7 +126,9 @@ horizonEval cache depth board alpha beta =  {-# SCC "m_horizonEval" #-}
       if playerInCheck board
       then {-# SCC "m_horizonEval_incheck" #-}
           let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
-          in foldHorizonEval cache depth board moves alpha beta
+          in if (null moves) 
+             then return $ outOfMovesEval board
+             else foldHorizonEval cache depth board moves alpha beta
       else {-# SCC "m_horizonEval_not_incheck" #-} do
           pat <- finalDepthEval cache board
           let alpha' = max alpha pat
