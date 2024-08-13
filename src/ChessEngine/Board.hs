@@ -680,7 +680,7 @@ pseudoLegalCandidateMoves board = {-# SCC "m_pseudoLegalCandidateMoves" #-}
 candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
-      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin candidate) || isKingMove candidate) && playerInCheck' board' player
+      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin) || isKingMove || isEnPassant) && playerInCheck' board' player
   in if not inCheck
      then return board'
      else Nothing
@@ -689,12 +689,17 @@ candidateMoveLegal board candidate =
     wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition (pieces board) player
-    movePotentiallyBreakingPin move =
-        fromRow move == king_y
-            || fromCol move == king_x
-            || abs (fromRow move - king_y) == abs (fromCol move - king_x)
-    isKingMove move =
-        fromRow move == king_y && fromCol move == king_x
+    movePotentiallyBreakingPin =
+        fromRow candidate == king_y
+            || fromCol candidate == king_x
+            || abs (fromRow candidate - king_y) == abs (fromCol candidate - king_x)
+    isKingMove =
+        fromRow candidate == king_y && fromCol candidate == king_x
+    -- en pessent move might clear a pin held by opponent's pawn
+    isEnPassant = case pieceOnSquare board (fromCol candidate) (fromRow candidate) of
+        Just (ChessPiece _ Pawn) -> (fromCol candidate) /= (toCol candidate)
+        _ -> False
+        
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
