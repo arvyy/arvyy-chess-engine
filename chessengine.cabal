@@ -27,6 +27,7 @@ library chess-internal
   hs-source-dirs: src
   ghc-options: -Wall
   exposed-modules: 
+    ChessEngine.ReplUtil,
     ChessEngine.Heatmaps, 
     ChessEngine.Board,
     ChessEngine.PositionEval,

@@ -118,7 +118,7 @@ yieldThinkResult state = (infoCp ++ infoNodes ++ infoCurrLine ++ bestMove, blank
     EvaluateResult {moves = moves, evaluation = (PositionEval value), nodesParsed = nodesParsed} = evalResult
     infoCp = ["info cp " ++ show (floor (value * 100))]
     infoNodes = ["info nodes " ++ show nodesParsed]
-    infoCurrLine = ["info currline " ++ (intercalate " " (mapMaybe moveToString moves))]
+    infoCurrLine = ["info currline 1 " ++ (intercalate " " (mapMaybe moveToString moves))]
     bestMove = case moves of
       [] -> []
       (m : _) -> case moveToString m of

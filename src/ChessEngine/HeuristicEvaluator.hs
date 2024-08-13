@@ -1,5 +1,7 @@
+{-# LANGUAGE ScopedTypeVariables #-}
+
 module ChessEngine.HeuristicEvaluator
-( finalDepthEval )
+( finalDepthEval, finalDepthEvalExplained )
 where
 
 import Control.Monad.ST
@@ -7,6 +9,7 @@ import ChessEngine.Board
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
 import Data.Foldable
+import Control.Monad.Trans.State
 
 evaluatePawns :: ChessCache s -> ChessBoard -> ST s Float
 evaluatePawns cache board = do
@@ -69,14 +72,36 @@ evaluatePawns cache board = do
         Just (ChessPiece Black Pawn) -> [False]
         _ -> []
 
--- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval :: ChessCache s -> ChessBoard -> ST s PositionEval
 finalDepthEval cache board = do
-  let nonPawnScore = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
-  pawnScore <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
-  return $ PositionEval (nonPawnScore + pawnScore)
+    (eval, _) <- finalDepthEval' (const ()) cache board
+    return eval
+
+finalDepthEvalExplained :: ChessBoard -> (PositionEval, [String])
+finalDepthEvalExplained board = runST $ do
+    cache <- create
+    finalDepthEval' return cache board
+
+-- returns current value as negamax (ie, score is multipled for -1 if current player is black)
+finalDepthEval' :: Monoid m => (String -> m) -> ChessCache s -> ChessBoard -> ST s (PositionEval, m)
+finalDepthEval' infoConsumer cache board = do
+  let nonPawnScoreRaw = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
+  let nonPawnScore = explain infoConsumer nonPawnScoreRaw "Non pawns"
+  pawnScoreRaw <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
+  let pawnScore = explain infoConsumer pawnScoreRaw "Pawns"
+  let (evalScore, explanation) = explain' infoConsumer (addScore nonPawnScore pawnScore) "Total result"
+  return (PositionEval evalScore, explanation)
   where
     pieceMul color = if color == turn board then 1 else -1
+
+    addScore :: Monoid m => (Float, m) -> (Float, m) -> (Float, m)
+    addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
+
+    explain :: Monoid m => (String -> m) -> Float -> String -> (Float, m)
+    explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))
+
+    explain' :: Monoid m => (String -> m) -> (Float, m) -> String -> (Float, m)
+    explain' infoConsumer (score, explanation) text = (score, explanation <> infoConsumer (text ++ ": " ++ (show score)))
 
     scorePiece :: (Int, Int, ChessPiece) -> Float
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
@@ -109,7 +134,7 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
         Pawn -> 0.2
-        King -> 1
+        King -> 0.1
         Bishop -> 0.5
         Horse -> 0.5
         Rock -> 0.2
