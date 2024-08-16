@@ -11,7 +11,7 @@ import ChessEngine.Heatmaps
 import Data.Foldable
 import Control.Monad.Trans.State
 
-evaluatePawns :: ChessCache s -> ChessBoard -> ST s Float
+evaluatePawns :: ChessCache -> ChessBoard -> IO Float
 evaluatePawns cache board = do
   let key = pawns $ pieces board
   pawnEvaluation <- getPawnEvaluation cache key
@@ -72,18 +72,18 @@ evaluatePawns cache board = do
         Just (ChessPiece Black Pawn) -> [False]
         _ -> []
 
-finalDepthEval :: ChessCache s -> ChessBoard -> ST s PositionEval
+finalDepthEval :: ChessCache -> ChessBoard -> IO PositionEval
 finalDepthEval cache board = do
     (eval, _) <- finalDepthEval' (const ()) cache board
     return eval
 
-finalDepthEvalExplained :: ChessBoard -> (PositionEval, [String])
-finalDepthEvalExplained board = runST $ do
+finalDepthEvalExplained :: ChessBoard -> IO (PositionEval, [String])
+finalDepthEvalExplained board = do
     cache <- create
     finalDepthEval' return cache board
 
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
-finalDepthEval' :: Monoid m => (String -> m) -> ChessCache s -> ChessBoard -> ST s (PositionEval, m)
+finalDepthEval' :: Monoid m => (String -> m) -> ChessCache -> ChessBoard -> IO (PositionEval, m)
 finalDepthEval' infoConsumer cache board = do
   let nonPawnScoreRaw = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
   let nonPawnScore = explain infoConsumer nonPawnScoreRaw "Non pawns"

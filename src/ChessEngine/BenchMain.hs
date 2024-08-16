@@ -5,6 +5,8 @@ import ChessEngine.Board
 import ChessEngine.PositionEval
 import Control.Monad (forM_)
 import Control.Applicative ((<|>))
+import Data.Maybe (fromJust)
+import Data.IORef
 
 -- https://www.chessprogramming.org/Bratko-Kopec_Test
 positions :: [(String, String)]
@@ -34,16 +36,14 @@ positions = [
     ("r1bqk2r/pp2bppp/2p5/3pP3/P2Q1P2/2N1B3/1PP3PP/R4RK1 b kq - ", "f6"),
     ("r2qnrnk/p2b2b1/1p1p2pp/2pPpp2/1PP1P3/PRNBB3/3QNPPP/5RK1 w - - ", "f4")]
 
-computePosition :: String -> String -> String
-computePosition fen expectedBestMove = case do
-    (board, _) <- loadFen fen
-    let EvaluateResult { nodesParsed, moves = (move:rest) } = evaluate board 4
+computePosition :: String -> String -> IO String
+computePosition fen expectedBestMove = do
+    let (board, _) = fromJust $ loadFen fen
+    evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
+    EvaluateResult { nodesParsed, moves = (move:rest) } <- evaluate evalResultRef board 4
     return $ "Expected best move: " ++ expectedBestMove ++ ", found move: " ++ (show move) ++ ". Nodes: " ++ (show nodesParsed)
-    of
-    Just n -> n
-    _ -> "Failed"
 
 main :: IO ()
 main = do
-    let results = map (\(fen, bm) -> computePosition fen bm) positions
+    results <- mapM (\(fen, bm) -> computePosition fen bm) positions
     forM_ results print

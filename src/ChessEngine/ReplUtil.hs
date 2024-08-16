@@ -10,6 +10,6 @@ heuristicEvalExplainPosition fen = do
   let (board, _) = case loadFen fen of
                     Just v -> v
                     _ -> error "Invalid fen"
-  let (eval, explanation) = finalDepthEvalExplained board
+  (eval, explanation) <- finalDepthEvalExplained board
   putStrLn $ "Evalation: " ++ show eval
   forM_ explanation putStrLn

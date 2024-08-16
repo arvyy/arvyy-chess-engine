@@ -44,6 +44,7 @@ import Data.Maybe
 import GHC.Generics (Generic)
 import Data.Foldable (find)
 import ChessEngine.PrecomputedCandidateMoves
+import Text.Read (readMaybe)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -176,6 +177,7 @@ data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq)
 
 data ChessBoard = ChessBoard
   { turn :: !PlayerColor,
+    fullMoves :: !Int,
     pieces :: !ChessBoardPositions,
     -- if last move was double pawn move, indicates the file for potential en passant followup
     enPassant :: !(Maybe Int),
@@ -185,13 +187,15 @@ data ChessBoard = ChessBoard
     blackKingCastle :: !Bool,
     blackQueenCastle :: !Bool
   }
-  deriving (Eq, Show, Ord, Generic)
+  deriving (Eq, Show, Ord)
 
 instance Hashable PlayerColor
 
 instance Hashable ChessBoardPositions
 
-instance Hashable ChessBoard
+instance Hashable ChessBoard where
+    hashWithSalt salt ChessBoard { turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle } =
+        hashWithSalt salt (turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle)
 
 data PromoChessPieceType = NoPromo | PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq, Enum)
 
@@ -357,6 +361,7 @@ applyMoveUnsafe board move =
   let ChessPiece player pieceType = case pieceOnSquare board x y of
         Nothing -> error $ "Unsafe move tried to move unexisting piece. Square: " ++ show (x, y)
         Just f -> f
+      fullMoves' = (fullMoves board) + (if (turn board) == Black then 1 else 0)
       isEnPassantMove = pieceType == Pawn && enPassant board == Just x' && (if player == White then y == 5 else y == 4)
       isDoubleDipMove = pieceType == Pawn && abs (y - y') == 2
       isKingCastleMove = pieceType == King && x == 5 && x' == 7
@@ -414,7 +419,8 @@ applyMoveUnsafe board move =
           whiteKingCastle = whiteKingCastle',
           blackKingCastle = blackKingCastle',
           whiteQueenCastle = whiteQueenCastle',
-          blackQueenCastle = blackQueenCastle'
+          blackQueenCastle = blackQueenCastle',
+          fullMoves = fullMoves'
         }
   where
     (x, y, x', y', promotion) = moveToTuple move
@@ -769,6 +775,18 @@ loadEnPassant (x : y : ' ' : rest) = do
   return (Just x', rest)
 loadEnPassant _ = Nothing
 
+loadFullMoves :: String -> Maybe (Int, String)
+loadFullMoves input = do
+    let (fullMoveStr, input') = readNumber "" input
+    fullMove <- readMaybe fullMoveStr
+    return (fullMove, input')
+    where
+        readNumber result [] = (result, [])
+        readNumber result (x:xs) =
+            if isDigit x
+            then readNumber (result ++ [x]) xs
+            else (result, x:xs)
+
 skipUntilWhitespace :: String -> String
 skipUntilWhitespace (' ' : rest) = rest
 skipUntilWhitespace [] = []
@@ -793,11 +811,12 @@ loadFen input = do
   (turn, input) <- loadTurn input
   ((wk, wq, bk, bq), input) <- loadCastlingRights input (False, False, False, False)
   (enPassant, input) <- loadEnPassant input
-  let input = skipUntilWhitespace input
-  let input = skipUntilWhitespace input
+  let input' = skipUntilWhitespace input
+  (fullMoves, input'') <- loadFullMoves input'
   let board =
         ChessBoard
           { turn = turn,
+            fullMoves = fullMoves,
             pieces = pieces,
             enPassant = enPassant,
             whiteKingCastle = wk,
@@ -805,7 +824,7 @@ loadFen input = do
             whiteQueenCastle = wq,
             blackQueenCastle = bq
           }
-  return (board, input)
+  return (board, input'')
 
 boardToFen :: ChessBoard -> String
 boardToFen board =

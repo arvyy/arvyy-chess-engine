@@ -16,7 +16,7 @@ module ChessEngine.EvaluatorData
 where
 
 import ChessEngine.Board
-import qualified Data.HashTable.ST.Basic as Map
+import qualified Data.HashTable.IO as Map
 import Control.Monad.ST
 import Data.Int (Int64)
 import Control.Monad
@@ -34,13 +34,13 @@ evalAdd (PositionEval v) added = (PositionEval $ v + added)
 data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
 data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [Move] deriving (Show)
-type TranspositionTable s = Map.HashTable s ChessBoard TranspositionValue
-type PawnTable s = Map.HashTable s Int64 Float
-type KillerMoveTable s = Map.HashTable s Int [Move]
+type TranspositionTable = Map.CuckooHashTable ChessBoard TranspositionValue
+type PawnTable = Map.CuckooHashTable Int64 Float
+type KillerMoveTable = Map.CuckooHashTable Int [Move]
 
-data ChessCache s = ChessCache (TranspositionTable s) (PawnTable s) (KillerMoveTable s)
+data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
-putValue :: ChessCache s -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> ST s ()
+putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> IO ()
 putValue (ChessCache table _ _) board depth value bound move = do
   existingValue <- Map.lookup table board
   case existingValue of
@@ -48,16 +48,16 @@ putValue (ChessCache table _ _) board depth value bound move = do
       when (depth >= prevDepth) $ Map.insert table board (TranspositionValue bound value depth move)
     Nothing -> Map.insert table board (TranspositionValue bound value depth move)
 
-getValue :: ChessCache s -> ChessBoard -> ST s (Maybe TranspositionValue)
+getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
 getValue (ChessCache table _ _) board = Map.lookup table board
 
-putPawnEvaluation :: ChessCache s -> Int64 -> Float -> ST s ()
+putPawnEvaluation :: ChessCache -> Int64 -> Float -> IO ()
 putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = Map.insert pawns' pawnPosition value
 
-getPawnEvaluation :: ChessCache s -> Int64 -> ST s (Maybe Float)
+getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Float)
 getPawnEvaluation (ChessCache _ pawns' _) position = Map.lookup pawns' position
 
-putKillerMove :: ChessCache s -> Int -> Move -> ST s ()
+putKillerMove :: ChessCache -> Int -> Move -> IO ()
 putKillerMove (ChessCache _ _ killerMoves) ply move = 
     do 
         existing' <- Map.lookup killerMoves ply
@@ -66,14 +66,14 @@ putKillerMove (ChessCache _ _ killerMoves) ply move =
                     Nothing -> [move]
         Map.insert killerMoves ply new
 
-getKillerMoves :: ChessCache s -> Int -> ST s [Move]
+getKillerMoves :: ChessCache -> Int -> IO [Move]
 getKillerMoves (ChessCache _ _ killerMoves) ply =
     do
         existing' <- Map.lookup killerMoves ply
         let existing = fromMaybe [] existing'
         return existing
 
-create :: ST s (ChessCache s)
+create :: IO ChessCache
 create = do
   table <- Map.new
   pawns' <- Map.new

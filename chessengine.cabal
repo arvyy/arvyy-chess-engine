@@ -15,7 +15,7 @@ common deps
      unordered-containers >= 0.2,
      hashable >= 1.4,
      hashtables,
-     transformers >=0.5,
+     transformers >=0.6,
      time >=1.9,
      stm >=2.5,
      regex-pcre-builtin >=0.95
@@ -35,11 +35,13 @@ library chess-internal
     ChessEngine.EvaluatorData,
     ChessEngine.HeuristicEvaluator
     ChessEngine.PrecomputedCandidateMoves
+    ChessEngine.TimeManager
     
 executable chessengine_uci
   import: deps
   main-is: src/ChessEngine/UCIMain.hs
   default-language: Haskell2010
+  ghc-options: -Wall -threaded -fno-omit-yields
   build-depends:
     chess-internal
 

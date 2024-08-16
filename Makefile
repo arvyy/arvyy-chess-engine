@@ -19,4 +19,9 @@ sprt:
 
 profile:
 	cabal build --enable-profiling --enable-library-profiling
-	cat profile_input.txt | $(cabal exec which chessengine_uci) +RTS -p
+	cat profile_input.txt | $$(cabal exec which chessengine_uci) +RTS -p
+
+deploy:
+	cabal build
+	rm ${DEPLOYMENT_DIR}/chessengine_uci
+	cp $$(cabal exec which chessengine_uci) ${DEPLOYMENT_DIR}/chessengine_uci
