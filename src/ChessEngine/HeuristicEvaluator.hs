@@ -92,7 +92,7 @@ finalDepthEval' infoConsumer cache board = do
   let pawnScore = explain infoConsumer pawnScoreRaw "Pawns"
   let myKingScoreRaw = scoreKingSafety board (turn board)
   let myKingScore = explain infoConsumer myKingScoreRaw "My king safety score"
-  let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board))
+  let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board)) * (-1)
   let opponentKingScore = explain infoConsumer opponentKingScoreRaw "Opponent king safety score"
   let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore]) "Total result"
   return (PositionEval evalScore, explanation)
@@ -123,20 +123,25 @@ finalDepthEval' infoConsumer cache board = do
 scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
 scorePieceThreats board piece =
   let isOwnSide y = case piece of
-        (_, _, ChessPiece White _) -> y < 5
-        _ -> y > 4
+        (_, _, ChessPiece White _) -> y < 4
+        _ -> y > 5
       (ownSide, opponentSide) =
         foldl'
           (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
           (0.0, 0.0)
           (pieceThreats board piece)
-      typeMultiplier = case piece of
+      (_, _, ChessPiece _ pieceType) = piece
+      (multiplier, maxBonus) = case pieceType of
         -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
         -- without developing other pieces
         -- TODO fix this by punishing evaluation for pieces being in starting position?
-        (_, _, ChessPiece _ Queen) -> 0.5
-        _ -> 1.0
-   in (log (ownSide + 1.0) * 1 + log (opponentSide + 1.0) * 1.5) * typeMultiplier
+        Pawn -> (1, 1)
+        Horse -> (1.5, 2)
+        Bishop -> (1, 2)
+        Rock -> (2, 3)
+        Queen -> (0.5, 3)
+        King -> (0.5, 1)
+   in min (log (1 + ownSide + (opponentSide * 1.5)) * multiplier) maxBonus
 
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
