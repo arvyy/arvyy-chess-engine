@@ -186,7 +186,8 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates' cache first bestMoveValue@(bestEval, _, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, nullWindowTried) nodesParsed
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
       -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
-      | not nullMoveTried && allowNullMove && depth < 4 && (not $ playerInCheck candidateBoard) = do
+      -- currently disabled due to buggy implementation
+      | not nullMoveTried && allowNullMove && depth > 4 && (not $ playerInCheck candidateBoard) = do
           let params' =
                 params
                   { allowNullMove = False,
@@ -278,7 +279,10 @@ evaluateIteration cache board lastDepthBest depth =
             board = board,
             nodesParsed = 0,
             currentBest = lastDepthBest,
-            allowNullMove = True }
+            -- TODO return null moves; currently it hallucinates and blunders pieces :(
+            -- allowNullMove = True
+            allowNullMove = False
+            }
    in do
         evaluate' cache params
 
@@ -314,6 +318,6 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
 printEvaluationInfo :: PlayerColor -> EvaluateResult -> IO ()
 printEvaluationInfo player EvaluateResult { nodesParsed, evaluation = PositionEval value, moves } = do
     let m = if player == White then 1 else -1
-    putStrLn $ "info cp " ++ show (floor (value * 100 * m))
     putStrLn $ "info nodes " ++ show nodesParsed
-    putStrLn $ "info currline 1 " ++ (intercalate " " (mapMaybe moveToString moves))
+    putStrLn $ "info pv " ++ (intercalate " " (mapMaybe moveToString moves))
+    putStrLn $ "info score cp " ++ show (floor (value * 100 * m))

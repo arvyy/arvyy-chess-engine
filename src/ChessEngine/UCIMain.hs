@@ -18,6 +18,8 @@ import Data.IORef
 import Control.Monad.Trans.Maybe (runMaybeT, hoistMaybe)
 import Control.Monad.IO.Class (liftIO)
 import Control.Applicative (Alternative((<|>)))
+import Control.Exception (try, SomeException)
+import Control.Exception.Base (catch)
 
 data EngineState = EngineState
   { board :: !(Maybe ChessBoard),
@@ -94,10 +96,13 @@ doHandleCommand (Go props) stateRef now = do
   evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
 
   -- worker thread doing calculation
-  workerThreadId' <- forkIO $ do
-        let board' = fromJust $ board state
-        result <- evaluate evalResultRef board' depth'
-        showBestMoveAndClear stateRef result
+  workerThreadId' <- forkIO $ catch
+          (do
+            let board' = fromJust $ board state
+            result <- evaluate evalResultRef board' depth'
+            showBestMoveAndClear stateRef result)
+          (\e -> putStrLn ("Error: " ++ (show (e :: SomeException))))
+
 
   -- killer thread killing on deadline
   maybeKillerThreadId <- case deadline of 
