@@ -26,6 +26,7 @@ module ChessEngine.Board
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
     quickMaterialCount,
+    is3foldRepetition,
     initialBoard,
     applyMove,
     applyMoveUnsafe,
@@ -49,6 +50,7 @@ import GHC.Generics (Generic)
 import Data.Foldable (find)
 import ChessEngine.PrecomputedCandidateMoves
 import Text.Read (readMaybe)
+import Data.List (unfoldr)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -200,9 +202,11 @@ data ChessBoard = ChessBoard
     whiteKingCastle :: !Bool,
     whiteQueenCastle :: !Bool,
     blackKingCastle :: !Bool,
-    blackQueenCastle :: !Bool
-  }
-  deriving (Eq, Show, Ord)
+    blackQueenCastle :: !Bool,
+    -- linked list of boards leading to this one for purposes of
+    -- 3fold repetition detection; cut off when doing irreversible move like capture / pawn move
+    prev :: Maybe ChessBoard }
+    deriving (Eq, Show, Ord)
 
 instance Hashable PlayerColor
 
@@ -429,6 +433,10 @@ applyMoveUnsafe board move =
             (Black, Rock) -> not (x == 1 && y == 8)
             _ -> True
           && not blackQueenRockTooken
+      isIrreversible = pieceType == Pawn || isCastleMove || isJust (pieceOnSquare' oldPieces x' y')
+      linkedBoard = if isIrreversible
+                    then Nothing
+                    else Just board
    in board
         { pieces = newPieces,
           enPassant = if isDoubleDipMove then Just x else Nothing,
@@ -437,7 +445,8 @@ applyMoveUnsafe board move =
           blackKingCastle = blackKingCastle',
           whiteQueenCastle = whiteQueenCastle',
           blackQueenCastle = blackQueenCastle',
-          fullMoves = fullMoves'
+          fullMoves = fullMoves',
+          prev = linkedBoard
         }
   where
     (x, y, x', y', promotion) = moveToTuple move
@@ -475,6 +484,28 @@ applyMoveUnsafe board move =
             PromoBishop -> ChessPiece color Bishop
           p2 = setPosition p1 x' y' newMovedPiece
        in p2
+
+-- return if given board is in 3fold repetition state
+is3foldRepetition :: ChessBoard -> Bool
+is3foldRepetition board = seenCount >= 2
+    where
+        isSamePos board1 board2 =
+            ((pieces board1) == (pieces board2)) &&
+            ((blackQueenCastle board1) == (blackQueenCastle board2)) &&
+            ((blackKingCastle board1) == (blackKingCastle board2)) &&
+            ((whiteQueenCastle board1) == (whiteQueenCastle board2)) &&
+            ((whiteKingCastle board1) == (whiteKingCastle board2)) &&
+            ((enPassant board1) == (enPassant board2))
+
+        unfoldBoards b@ChessBoard { prev } =
+            case prev of
+                Just (ChessBoard { prev = Just b'}) -> b : unfoldBoards b'
+                _ -> [b]
+
+        otherBoards = drop 1 $ unfoldBoards board
+
+        seenCount = length $ filter (isSamePos board) otherBoards
+            
 
 inBounds :: Int -> Int -> Bool
 inBounds x y = x >= 1 && x <= 8 && y >= 1 && y <= 8
@@ -839,7 +870,8 @@ loadFen input = do
             whiteKingCastle = wk,
             blackKingCastle = bk,
             whiteQueenCastle = wq,
-            blackQueenCastle = bq
+            blackQueenCastle = bq,
+            prev = Nothing
           }
   return (board, input'')
 

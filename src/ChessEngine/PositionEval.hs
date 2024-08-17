@@ -51,30 +51,33 @@ data EvaluateResult = EvaluateResult
 type App = ReaderT (IORef EvaluateResult) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App ((PositionEval, [Move]), Int)
-evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply } = do
-  let depth = max depth' 0
-  tableHit <- liftIO $ getValue cache board
-  let doSearch = do
-        sortedCandidates <- liftIO $ sortCandidates cache board ply (pseudoLegalCandidateMoves board)
-        let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
-        ((eval', moves', bestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
-        when (bound == LowerBound) $ liftIO $
-             case moves' of
-                move : _ -> when (not $ isCaptureMove board move) $ putKillerMove cache ply move
-                _ -> return ()
-        liftIO $ putValue cache board depth eval' bound moves'
-        let result = ((eval', moves'), nodes + 1)
-        return result
-  case tableHit of
-    Just (TranspositionValue bound eval cachedDepth bestMoveLine) ->
-      if (cachedDepth < depth)
-      then doSearch
-      else if ((bound == Exact) ||
-               (bound == LowerBound && eval > beta) ||
-               (bound == UpperBound && eval < alpha))
-      then return ((eval, bestMoveLine), nodesParsed)
-      else doSearch
-    Nothing -> doSearch
+evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply } =
+  if is3foldRepetition board
+  then return ((PositionEval 0, []), 0)
+  else do
+      let depth = max depth' 0
+      tableHit <- liftIO $ getValue cache board
+      let doSearch = do
+            sortedCandidates <- liftIO $ sortCandidates cache board ply (pseudoLegalCandidateMoves board)
+            let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
+            ((eval', moves', bestMove), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
+            when (bound == LowerBound) $ liftIO $
+                 case moves' of
+                    move : _ -> when (not $ isCaptureMove board move) $ putKillerMove cache ply move
+                    _ -> return ()
+            liftIO $ putValue cache board depth eval' bound moves'
+            let result = ((eval', moves'), nodes + 1)
+            return result
+      case tableHit of
+        Just (TranspositionValue bound eval cachedDepth bestMoveLine) ->
+          if (cachedDepth < depth)
+          then doSearch
+          else if ((bound == Exact) ||
+                   (bound == LowerBound && eval > beta) ||
+                   (bound == UpperBound && eval < alpha))
+          then return ((eval, bestMoveLine), nodesParsed)
+          else doSearch
+        Nothing -> doSearch
 
 sortCandidates :: ChessCache -> ChessBoard -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply candidates =
