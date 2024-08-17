@@ -6,6 +6,7 @@
 module ChessEngine.Board
   ( ChessPieceType (..),
     PlayerColor (..),
+    otherPlayer,
     ChessPiece (..),
     Move,
     createMove,
@@ -20,14 +21,17 @@ module ChessEngine.Board
     boardPositions,
     boardNonPawnPositions,
     boardPawnPositions,
+    hasPieceOnSquare,
     pieceOnSquare,
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
+    quickMaterialCount,
     initialBoard,
     applyMove,
     applyMoveUnsafe,
     isCaptureMove,
     playerInCheck,
+    playerKingPosition,
     parseMove,
     moveToString,
     loadFen,
@@ -85,8 +89,8 @@ playerPositionsToList positions@ChessBoardPositions {black, white, bishops, hors
 playerPositionsToList _ _ [] = []
 
 {-# INLINE playerKingPosition #-}
-playerKingPosition :: ChessBoardPositions -> PlayerColor -> (Int, Int)
-playerKingPosition ChessBoardPositions {black, white, kings} color =
+playerKingPosition :: ChessBoard -> PlayerColor -> (Int, Int)
+playerKingPosition ChessBoard { pieces = ChessBoardPositions {black, white, kings}} color =
   let bitmap = (if color == White then white else black) .&. kings
    in bitIndexToCoords (countTrailingZeros bitmap)
 
@@ -144,6 +148,17 @@ setPosition positions x y (ChessPiece color pieceType) =
         }
   where
     bitIndex = coordsToBitIndex x y
+
+-- count minor + major pieces with standard evaluation
+{-# INLINE quickMaterialCount #-}
+quickMaterialCount :: ChessBoard -> PlayerColor -> Int
+quickMaterialCount board player =
+    let p = pieces board
+        playerBits = if player == White then (white p) else (black p)
+    in   (popCount (bishops p .&. playerBits)) * 3
+       + (popCount (horses p .&. playerBits)) * 3
+       + (popCount (rocks p .&. playerBits)) * 5
+       + (popCount (queens p .&. playerBits)) * 9
 
 pieceOnSquare' :: ChessBoardPositions -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y = do
@@ -327,6 +342,8 @@ isPlayerOnSquare ChessBoard { pieces = ChessBoardPositions{ black } } Black x y 
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board = pieceOnSquare' (pieces board)
 
+
+{-# INLINE hasPieceOnSquare #-}
 hasPieceOnSquare :: ChessBoard -> Int -> Int -> ChessPiece -> Bool
 hasPieceOnSquare ChessBoard {pieces} x y (ChessPiece color pieceType) =
   testBit (playerBitboard .&. pieceBitboard) bitIndex
@@ -555,7 +572,7 @@ squareUnderThreat board player x y =
        in pawnExists (x - 1) || pawnExists (x + 1)
 
     threatenedByKing =
-      let (x', y') = playerKingPosition (pieces board) opponentColor
+      let (x', y') = playerKingPosition board opponentColor
        in abs (x - x') <= 1 && abs (y - y') <= 1
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
@@ -564,7 +581,7 @@ playerPotentiallyPinned board player =
   any (\ray -> checkRayPin ray False [Queen, Rock]) (emptyBoardRockRays x y)
   where
     opponentColor = if player == White then Black else White
-    (x, y) = playerKingPosition (pieces board) player
+    (x, y) = playerKingPosition board player
 
     checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
     checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
@@ -588,7 +605,7 @@ playerInCheck board = playerInCheck' board (turn board)
 {-# INLINE playerInCheck' #-}
 playerInCheck' :: ChessBoard -> PlayerColor -> Bool
 playerInCheck' board player =
-  let (x, y) = playerKingPosition (pieces board) player
+  let (x, y) = playerKingPosition board player
    in squareUnderThreat board player x y
 
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
@@ -694,7 +711,7 @@ candidateMoveLegal board candidate =
     player = turn board
     wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
-    (king_x, king_y) = playerKingPosition (pieces board) player
+    (king_x, king_y) = playerKingPosition board player
     movePotentiallyBreakingPin =
         fromRow candidate == king_y
             || fromCol candidate == king_x

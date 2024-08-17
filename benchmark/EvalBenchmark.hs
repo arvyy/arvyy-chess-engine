@@ -8,16 +8,11 @@ import Data.Foldable
 import Data.Maybe
 import Debug.Trace
 
-evalPosition :: String -> Int -> PositionEval
-evalPosition fen depth =
+evalPosition :: String -> Int -> IO PositionEval
+evalPosition fen depth = do
   let (board, _) = fromJust $ loadFen fen
-      result = evaluate board depth
-   in loopTilCompletion result
-  where
-    loopTilCompletion EvaluateResult {finished, evaluation, continuation} =
-      if finished
-        then evaluation
-        else loopTilCompletion continuation
+  result <- evaluate board depth
+  return evaluation result
 
 countNodes fen depth =
   let (board, _) = fromJust $ loadFen fen

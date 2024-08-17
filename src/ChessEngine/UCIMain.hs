@@ -96,12 +96,10 @@ doHandleCommand (Go props) stateRef now = do
   evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
 
   -- worker thread doing calculation
-  workerThreadId' <- forkIO $ catch
-          (do
+  workerThreadId' <- forkIO $ do
             let board' = fromJust $ board state
             result <- evaluate evalResultRef board' depth'
-            showBestMoveAndClear stateRef result)
-          (\e -> putStrLn ("Error: " ++ (show (e :: SomeException))))
+            showBestMoveAndClear stateRef result
 
 
   -- killer thread killing on deadline

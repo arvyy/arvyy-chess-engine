@@ -10,6 +10,7 @@ import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
 import Data.Foldable
 import Control.Monad.Trans.State
+import Data.Time.Calendar.MonthDay (monthAndDayToDayOfYear)
 
 evaluatePawns :: ChessCache -> ChessBoard -> IO Float
 evaluatePawns cache board = do
@@ -29,7 +30,7 @@ evaluatePawns cache board = do
               + (if isPassedPawn x y color then 0.4 else 0)
               + (if isBackwardDoubledPawn x y color then (-0.3) else 0)
               + (if isProtectedPawn x y color then 0.05 else 0)
-              + (piecePositionBonus x y (ChessPiece color Pawn) * 0.2)
+              + (piecePositionBonus x y (ChessPiece color Pawn))
               + 0
           multiplier = if color == White then 1 else -1
        in (score * multiplier) + doEvaluatePawns rest
@@ -89,13 +90,21 @@ finalDepthEval' infoConsumer cache board = do
   let nonPawnScore = explain infoConsumer nonPawnScoreRaw "Non pawns"
   pawnScoreRaw <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
   let pawnScore = explain infoConsumer pawnScoreRaw "Pawns"
-  let (evalScore, explanation) = explain' infoConsumer (addScore nonPawnScore pawnScore) "Total result"
+  let myKingScoreRaw = scoreKingSafety board (turn board)
+  let myKingScore = explain infoConsumer myKingScoreRaw "My king safety score"
+  let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board))
+  let opponentKingScore = explain infoConsumer opponentKingScoreRaw "Opponent king safety score"
+  let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore]) "Total result"
   return (PositionEval evalScore, explanation)
   where
     pieceMul color = if color == turn board then 1 else -1
 
     addScore :: Monoid m => (Float, m) -> (Float, m) -> (Float, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
+
+    addScores :: Monoid m => [(Float, m)] -> (Float, m)
+    addScores [a, b] = addScore a b
+    addScores (x : rest) = addScore x (addScores rest)
 
     explain :: Monoid m => (String -> m) -> Float -> String -> (Float, m)
     explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))
@@ -129,16 +138,63 @@ scorePieceThreats board piece =
         _ -> 1.0
    in (log (ownSide + 1.0) * 0.01 + log (opponentSide + 1.0) * 0.02) * typeMultiplier
 
+-- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
-        Pawn -> 0.2
-        King -> 0.1
-        Bishop -> 0.5
-        Horse -> 0.5
-        Rock -> 0.2
+        Pawn -> 0.4
+        King -> 0.2
+        Bishop -> 1
+        Horse -> 1.5
+        Rock -> 1.2
         Queen -> 0.0
         _ -> 0.0
       score = (squareRating ** 1.8) * maxBonus
    in score
+
+-- score relatively to given color
+-- score most likely to be negative, ie, penalty for lacking safety
+scoreKingSafety :: ChessBoard -> PlayerColor -> Float
+scoreKingSafety board player = 
+    (scorePawnShield + 0) * safetyMultiplier
+    where
+        (king_x, king_y) = playerKingPosition board player
+
+        -- expect 3 pawns in front of king 2x3 rectangle; penalize by -1 for each missing pawn
+        scorePawnShield :: Float
+        scorePawnShield = 
+            let 
+              x1 = case king_x of
+                      1 -> 1
+                      8 -> 6
+                      n -> n - 1
+              x2 = x1 + 2
+              y1 = case player of
+                      White -> king_y + 1
+                      Black -> king_y - 2
+              y2 = y1 + 1
+              pawnShield = countPawnsInArea x1 y1 x2 y2
+            in (min 3 pawnShield) - 3
+
+        countPawnsInArea x1 y1 x2 y2 =
+            let squares = do
+                            x' <- [(max x1 1) .. (min x2 8)]
+                            y' <- [(max y1 1) .. (min y2 8)]
+                            return (x', y')
+            in foldl' (\count (x, y) -> if hasPieceOnSquare board x y (ChessPiece player Pawn) 
+                                        then count + 1 
+                                        else count) 
+                      0 squares
+
+        --TODO
+        --scoreOpenFile
+
+        safetyMultiplier :: Float
+        safetyMultiplier =
+            let opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player)
+                lowBound = 5.0
+                highBound = 30.0
+                range = highBound - lowBound
+                adjustedMaterial = min highBound (max lowBound opponentMaterial)
+            in (adjustedMaterial - lowBound) / range
