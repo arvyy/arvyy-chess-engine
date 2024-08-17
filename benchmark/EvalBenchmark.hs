@@ -7,12 +7,14 @@ import Criterion.Main
 import Data.Foldable
 import Data.Maybe
 import Debug.Trace
+import Data.IORef (newIORef)
 
 evalPosition :: String -> Int -> IO PositionEval
 evalPosition fen depth = do
   let (board, _) = fromJust $ loadFen fen
-  result <- evaluate board depth
-  return evaluation result
+  resultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
+  result <- evaluate resultRef board depth
+  return $ evaluation result
 
 countNodes fen depth =
   let (board, _) = fromJust $ loadFen fen
@@ -31,8 +33,8 @@ main =
   defaultMain
     [ bgroup
         "position eval"
-        [ bench "Initial pos 5 depth" $ whnf (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 5,
-          bench "Midgame pos 5 depth" $ whnf (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11") 5
+        [ bench "Initial pos 5 depth" $ whnfIO (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 5),
+          bench "Midgame pos 5 depth" $ whnfIO (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11" 5)
         ],
       bgroup
         "move generator"
