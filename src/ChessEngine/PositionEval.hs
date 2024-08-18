@@ -6,6 +6,7 @@
 module ChessEngine.PositionEval
   ( PositionEval (..),
     evaluate,
+    collectEvaluationInfo,
     EvaluateResult (..),
   )
 where
@@ -48,6 +49,7 @@ data EvaluateResult = EvaluateResult
     finished :: !Bool,
     evaluation :: !PositionEval,
     moves :: ![Move],
+    latestEvaluationInfo :: [String],
     showDebug :: !Bool }
   deriving (Show)
 
@@ -261,12 +263,14 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
           newBestMoveValue <-
                 if (first || eval > bestEval)
                   then do
-                    when (depth == maxDepth && showUCIInfo) $ do
+                    when (depth == maxDepth) $ do
                         env <- ask
                         result <- liftIO $ readIORef env
-                        let newResult = result { nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine }
+                        let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moveLine
+                        let newResult = result { nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo }
                         liftIO $ writeIORef env newResult
-                        liftIO $ printEvaluationInfo (turn board) newResult
+                        when showUCIInfo $
+                            liftIO $ forM_ lastEvalInfo putStrLn 
                     return moveValue
                   else return bestMoveValue
           let (alpha', raisedAlpha') = 
@@ -310,11 +314,11 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
     evaluateInReader :: App EvaluateResult
     evaluateInReader = do
         (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
+        let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moves
         env <- ask
         result' <- liftIO $ readIORef env
-        let result = result' { moves = moves, nodesParsed = nodesParsed, finished = True, evaluation = eval }
+        let result = result' { moves = moves, nodesParsed = nodesParsed, finished = True, evaluation = eval, latestEvaluationInfo = lastEvalInfo }
         liftIO $ writeIORef env result
-        liftIO $ printEvaluationInfo (turn board) result
         return result
 
     computeNext :: (Int, (PositionEval, [Move]), ChessCache, Int) -> App (Int, (PositionEval, [Move]), ChessCache, Int)
@@ -330,9 +334,9 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
       cache <- liftIO create
       computeNext ((startingDepth - 1), (PositionEval 0, []), cache, 0)
 
-printEvaluationInfo :: PlayerColor -> EvaluateResult -> IO ()
-printEvaluationInfo player EvaluateResult { nodesParsed, evaluation = PositionEval value, moves } = do
+collectEvaluationInfo :: PlayerColor -> Int -> PositionEval -> [Move] -> [String]
+collectEvaluationInfo player nodesParsed (PositionEval value) moves =
     let m = if player == White then 1 else -1
-    putStrLn $ "info nodes " ++ show nodesParsed
-    putStrLn $ "info pv " ++ (intercalate " " (mapMaybe moveToString moves))
-    putStrLn $ "info score cp " ++ show (floor (value * 100 * m))
+    in  [ "info nodes " ++ show nodesParsed
+        , "info pv " ++ (intercalate " " (mapMaybe moveToString moves))
+        , "info score cp " ++ show (floor (value * 100 * m))]

@@ -21,6 +21,7 @@ import Control.Applicative (Alternative((<|>)))
 import Control.Exception (try, SomeException)
 import Control.Exception.Base (catch)
 
+-- TODO cleanup structure, separate persistent state (engineStateShowDebug) from others
 data EngineState = EngineState
   { board :: !(Maybe ChessBoard),
     evalTimeLimit :: !(Maybe UTCTime),
@@ -142,13 +143,15 @@ doHandleCommand (Go props) stateRef now = do
 
   where 
     showBestMoveAndClear stateRef result = do
-        let EvaluateResult {moves = moves, evaluation = (PositionEval value), nodesParsed = nodesParsed} = result
+        let EvaluateResult {moves = moves, latestEvaluationInfo = latestEvaluationInfo } = result
+        liftIO $ forM_ latestEvaluationInfo putStrLn 
         case moves of
           [] -> return ()
           (m : _) -> case moveToString m of
             Just str ->
               putStrLn $ "bestmove " ++ str
             Nothing -> return ()
+        hFlush stdout
         
 
 doHandleCommand _ state _ = return ()
