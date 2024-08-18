@@ -39,13 +39,16 @@ data EvaluateParams = EvaluateParams
     board :: !ChessBoard,
     nodesParsed :: !Int,
     currentBest :: !(PositionEval, [Move]),
-    allowNullMove :: !Bool }
+    allowNullMove :: !Bool,
+    showUCIInfo :: !Bool }
 
+-- TODO rename to Context
 data EvaluateResult = EvaluateResult
   { nodesParsed :: !Int,
     finished :: !Bool,
     evaluation :: !PositionEval,
-    moves :: ![Move] }
+    moves :: ![Move],
+    showDebug :: !Bool }
   deriving (Show)
 
 type App = ReaderT (IORef EvaluateResult) IO
@@ -172,7 +175,7 @@ foldHorizonEval cache depth board (move : rest) alpha beta = do
 foldHorizonEval _ _ _ [] alpha _ = return alpha
 
 evaluate'' :: ChessCache -> EvaluateParams -> [(Move, ChessBoard)] -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
-evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove} candidates
+evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove, showUCIInfo } candidates
   | null candidates =
       let eval = outOfMovesEval board
        in return ((eval, [], Nothing), nodesParsed, Exact)
@@ -185,6 +188,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates cache candidates =
       foldCandidates' cache True False (PositionEval $ (-1) / 0, [], Nothing) candidates alpha beta 0 (False, False, False) nodesParsed
 
+-- TODO struct for passing arguments around?
     foldCandidates' :: ChessCache -> Bool -> Bool -> (PositionEval, [Move], Maybe Move) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Int -> (Bool, Bool, Bool) -> Int -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
     foldCandidates' cache first raisedAlpha bestMoveValue@(bestEval, _, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, nullWindowTried) nodesParsed
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
@@ -257,7 +261,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
           newBestMoveValue <-
                 if (first || eval > bestEval)
                   then do
-                    when (depth == maxDepth) $ do
+                    when (depth == maxDepth && showUCIInfo) $ do
                         env <- ask
                         result <- liftIO $ readIORef env
                         let newResult = result { nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine }
@@ -274,8 +278,8 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates' _ _ raisedAlpha bestMoveValue [] _ _ _ _ nodesParsed = return (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
 
-evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> App ((PositionEval, [Move]), Int)
-evaluateIteration cache board lastDepthBest depth =
+evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> App ((PositionEval, [Move]), Int)
+evaluateIteration cache board lastDepthBest depth showDebug =
   let params =
         EvaluateParams
           { alpha = PositionEval $ (-1) / 0,
@@ -288,7 +292,8 @@ evaluateIteration cache board lastDepthBest depth =
             currentBest = lastDepthBest,
             -- TODO return null moves; currently it hallucinates and blunders pieces :(
             -- allowNullMove = True
-            allowNullMove = False
+            allowNullMove = False,
+            showUCIInfo = showDebug
             }
    in do
         evaluate' cache params
@@ -305,8 +310,9 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
     evaluateInReader :: App EvaluateResult
     evaluateInReader = do
         (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
-        let result = EvaluateResult { moves = moves, nodesParsed = nodesParsed, finished = True, evaluation = eval }
         env <- ask
+        result' <- liftIO $ readIORef env
+        let result = result' { moves = moves, nodesParsed = nodesParsed, finished = True, evaluation = eval }
         liftIO $ writeIORef env result
         liftIO $ printEvaluationInfo (turn board) result
         return result
@@ -314,7 +320,9 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
     computeNext :: (Int, (PositionEval, [Move]), ChessCache, Int) -> App (Int, (PositionEval, [Move]), ChessCache, Int)
     computeNext current = do
       let (depth, lastDepthBest, cache, _) = current
-      (thisDepthBest, nodesParsed) <- evaluateIteration cache board lastDepthBest (depth + 1)
+      env <- ask
+      result <- liftIO $ readIORef env
+      (thisDepthBest, nodesParsed) <- evaluateIteration cache board lastDepthBest (depth + 1) (showDebug result)
       return $ (depth + 1, thisDepthBest, cache, nodesParsed)
     startingDepth = 1
     firstEvaluation :: App (Int, (PositionEval, [Move]), ChessCache, Int)

@@ -27,10 +27,19 @@ data EngineState = EngineState
     evalNodeLimit :: !(Maybe Int),
     result :: !(Maybe (IORef EvaluateResult)),
     workerThreadId :: Maybe ThreadId,
-    killerThreadId :: Maybe ThreadId }
+    killerThreadId :: Maybe ThreadId,
+    engineStateShowDebug :: !Bool }
 
 blank :: EngineState
-blank = EngineState {board = Nothing, evalTimeLimit = Nothing, evalNodeLimit = Nothing, result = Nothing, workerThreadId = Nothing, killerThreadId = Nothing }
+blank = EngineState 
+            { board = Nothing
+            , evalTimeLimit = Nothing
+            , evalNodeLimit = Nothing
+            , result = Nothing
+            , workerThreadId = Nothing
+            , killerThreadId = Nothing
+            , engineStateShowDebug = False
+            }
 
 main :: IO ()
 main = do
@@ -75,6 +84,10 @@ doHandleCommand UCI stateRef _ = do
     putStrLn "uciok"
 doHandleCommand IsReady state _ = do
     putStrLn "readyok"
+doHandleCommand (Debug enable) stateRef _ = do
+    state <- readIORef stateRef
+    let state' = state { engineStateShowDebug = enable }
+    writeIORef stateRef state'
 doHandleCommand (Position board') stateRef _ = do
     state <- readIORef stateRef
     let state' = state { board = Just board'}
@@ -93,7 +106,7 @@ doHandleCommand (Go props) stateRef now = do
       deadline = if infinite props
                  then Nothing
                  else explicitDeadline <|> implicitDeadline
-  evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
+  evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = (engineStateShowDebug state) }
 
   -- worker thread doing calculation
   workerThreadId' <- forkIO $ do
@@ -115,8 +128,7 @@ doHandleCommand (Go props) stateRef now = do
                         Just resultRef -> do
                                 res <- readIORef resultRef
                                 showBestMoveAndClear stateRef res
-                        _ -> return ()
-                    writeIORef stateRef blank)
+                        _ -> return ())
     Nothing -> return Nothing
 
   let newState = state 
@@ -137,7 +149,6 @@ doHandleCommand (Go props) stateRef now = do
             Just str ->
               putStrLn $ "bestmove " ++ str
             Nothing -> return ()
-        writeIORef stateRef blank
         
 
 doHandleCommand _ state _ = return ()
