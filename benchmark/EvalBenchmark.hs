@@ -12,7 +12,7 @@ import Data.IORef (newIORef)
 evalPosition :: String -> Int -> IO PositionEval
 evalPosition fen depth = do
   let (board, _) = fromJust $ loadFen fen
-  resultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [] }
+  resultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False, latestEvaluationInfo = [] }
   result <- evaluate resultRef board depth
   return $ evaluation result
 

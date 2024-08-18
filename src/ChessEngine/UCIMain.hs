@@ -107,7 +107,7 @@ doHandleCommand (Go props) stateRef now = do
       deadline = if infinite props
                  then Nothing
                  else explicitDeadline <|> implicitDeadline
-  evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = (engineStateShowDebug state) }
+  evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = (engineStateShowDebug state), latestEvaluationInfo = [] }
 
   -- worker thread doing calculation
   workerThreadId' <- forkIO $ do

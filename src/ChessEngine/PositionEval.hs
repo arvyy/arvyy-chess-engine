@@ -195,8 +195,9 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates' cache first raisedAlpha bestMoveValue@(bestEval, _, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, nullWindowTried) nodesParsed
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
       -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
+      -- don't use null move in end game (when opponent  has more than on minor piece) to avoig zugzwang
       -- currently disabled due to buggy implementation
-      | not nullMoveTried && allowNullMove && depth > 4 && (not $ playerInCheck candidateBoard) = do
+      | not nullMoveTried && allowNullMove && depth >= 4 && (not $ playerInCheck candidateBoard) && (quickMaterialCount candidateBoard (turn candidateBoard) > 3) = do
           let params' =
                 params
                   { allowNullMove = False,
@@ -232,7 +233,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
               (foldCandidates' cache False raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, True, nullWindowTried) newNodesParsed)
             else (foldCandidates' cache False raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
 
-      | (not nullWindowTried) && not first = do
+      | (not nullWindowTried) && not first && raisedAlpha = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 0.0001)
               params' =
                 params
