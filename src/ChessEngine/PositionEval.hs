@@ -233,7 +233,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
               (foldCandidates' cache False raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, True, nullWindowTried) newNodesParsed)
             else (foldCandidates' cache False raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
 
-      | (not nullWindowTried) && not first && raisedAlpha = do
+      | (not nullWindowTried) && not first && not (isNullWindow alpha beta) = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
               params' =
                 params
@@ -281,6 +281,9 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
                    else (alpha, raisedAlpha)
           foldCandidates' cache False raisedAlpha' newBestMoveValue restCandidates alpha' beta (siblingIndex + 1) (False, False, False) newNodesParsed
     foldCandidates' _ _ raisedAlpha bestMoveValue [] _ _ _ _ nodesParsed = return (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
+
+    isNullWindow :: PositionEval -> PositionEval -> Bool
+    isNullWindow (PositionEval alpha) (PositionEval beta) = (alpha - beta) <= 1
 
 
 evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> App ((PositionEval, [Move]), Int)
