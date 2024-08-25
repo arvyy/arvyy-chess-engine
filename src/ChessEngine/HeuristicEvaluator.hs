@@ -12,7 +12,7 @@ import Data.Foldable
 import Control.Monad.Trans.State
 import Data.Time.Calendar.MonthDay (monthAndDayToDayOfYear)
 
-evaluatePawns :: ChessCache -> ChessBoard -> IO Float
+evaluatePawns :: ChessCache -> ChessBoard -> IO Int
 evaluatePawns cache board = do
   let key = pawns $ pieces board
   pawnEvaluation <- getPawnEvaluation cache key
@@ -23,18 +23,18 @@ evaluatePawns cache board = do
       putPawnEvaluation cache key pawnEvaluation'
       return pawnEvaluation'
   where
-    doEvaluatePawns :: [(Int, Int, ChessPiece)] -> Float
+    doEvaluatePawns :: [(Int, Int, ChessPiece)] -> Int
     doEvaluatePawns ((x, y, ChessPiece color _) : rest) =
       let score =
-            1
-              + (if isPassedPawn x y color then 0.4 else 0)
-              + (if isBackwardDoubledPawn x y color then (-0.3) else 0)
-              + (if isProtectedPawn x y color then 0.05 else 0)
-              + (piecePositionBonus x y (ChessPiece color Pawn))
+            100
+              + (if isPassedPawn x y color then 40 else 0)
+              + (if isBackwardDoubledPawn x y color then (-30) else 0)
+              + (if isProtectedPawn x y color then 50 else 0)
+              + (floor $ 100 * piecePositionBonus x y (ChessPiece color Pawn))
               + 0
           multiplier = if color == White then 1 else -1
        in (score * multiplier) + doEvaluatePawns rest
-    doEvaluatePawns [] = 0.0
+    doEvaluatePawns [] = 0
 
     isPassedPawn x y White = null $ do
       x' <- [x - 1 .. x + 1]
@@ -99,28 +99,28 @@ finalDepthEval' infoConsumer cache board = do
   where
     pieceMul color = if color == turn board then 1 else -1
 
-    addScore :: Monoid m => (Float, m) -> (Float, m) -> (Float, m)
+    addScore :: Monoid m => (Int, m) -> (Int, m) -> (Int, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
 
-    addScores :: Monoid m => [(Float, m)] -> (Float, m)
+    addScores :: Monoid m => [(Int, m)] -> (Int, m)
     addScores [a, b] = addScore a b
     addScores (x : rest) = addScore x (addScores rest)
 
-    explain :: Monoid m => (String -> m) -> Float -> String -> (Float, m)
+    explain :: Monoid m => (String -> m) -> Int -> String -> (Int, m)
     explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))
 
-    explain' :: Monoid m => (String -> m) -> (Float, m) -> String -> (Float, m)
+    explain' :: Monoid m => (String -> m) -> (Int, m) -> String -> (Int, m)
     explain' infoConsumer (score, explanation) text = (score, explanation <> infoConsumer (text ++ ": " ++ (show score)))
 
-    scorePiece :: (Int, Int, ChessPiece) -> Float
+    scorePiece :: (Int, Int, ChessPiece) -> Int
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Queen) = (9 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (3 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Rock) = (5 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
-scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePieceThreats board piece =
   let isOwnSide y = case piece of
         (_, _, ChessPiece White _) -> y < 4
@@ -135,16 +135,16 @@ scorePieceThreats board piece =
         -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
         -- without developing other pieces
         -- TODO fix this by punishing evaluation for pieces being in starting position?
-        Pawn -> (1, 1)
-        Horse -> (1.5, 2)
-        Bishop -> (1, 2)
-        Rock -> (2, 3)
-        Queen -> (0.5, 3)
-        King -> (0.5, 1)
-   in min (log (1 + ownSide + (opponentSide * 1.5)) * multiplier) maxBonus
+        Pawn -> (1, 100)
+        Horse -> (1.5, 200)
+        Bishop -> (1, 200)
+        Rock -> (2, 300)
+        Queen -> (0.5, 300)
+        King -> (0.5, 100)
+   in floor $ min (100 * log (1 + ownSide + (opponentSide * 1.5)) * multiplier) maxBonus
 
 -- score from position tables only
-scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Float
+scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
@@ -156,18 +156,18 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
         Queen -> 0.0
         _ -> 0.0
       score = (squareRating ** 1.8) * maxBonus
-   in score
+   in floor $ score * 100
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
-scoreKingSafety :: ChessBoard -> PlayerColor -> Float
+scoreKingSafety :: ChessBoard -> PlayerColor -> Int
 scoreKingSafety board player = 
-    (scorePawnShield + 0) * safetyMultiplier
+    floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier
     where
         (king_x, king_y) = playerKingPosition board player
 
         -- expect 3 pawns in front of king 2x3 rectangle; penalize by -1 for each missing pawn
-        scorePawnShield :: Float
+        scorePawnShield :: Int
         scorePawnShield = 
             let 
               x1 = case king_x of
@@ -180,7 +180,7 @@ scoreKingSafety board player =
                       Black -> king_y - 2
               y2 = y1 + 1
               pawnShield = countPawnsInArea x1 y1 x2 y2
-            in (min 3 pawnShield) - 3
+            in ((min 3 pawnShield) - 3) * 100
 
         countPawnsInArea x1 y1 x2 y2 =
             let squares = do

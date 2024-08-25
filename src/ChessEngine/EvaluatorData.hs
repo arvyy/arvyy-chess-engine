@@ -22,20 +22,20 @@ import Data.Int (Int64)
 import Control.Monad
 import Data.Maybe (fromMaybe)
 
-newtype PositionEval = PositionEval Float
+newtype PositionEval = PositionEval Int
   deriving (Eq, Show, Ord)
 
 negateEval :: PositionEval -> PositionEval
 negateEval (PositionEval v) = PositionEval (-v)
 
-evalAdd :: PositionEval -> Float -> PositionEval
+evalAdd :: PositionEval -> Int -> PositionEval
 evalAdd (PositionEval v) added = (PositionEval $ v + added)
 
 data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
 data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [Move] deriving (Show)
 type TranspositionTable = Map.CuckooHashTable ChessBoard TranspositionValue
-type PawnTable = Map.CuckooHashTable Int64 Float
+type PawnTable = Map.CuckooHashTable Int64 Int
 type KillerMoveTable = Map.CuckooHashTable Int [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
@@ -51,10 +51,10 @@ putValue (ChessCache table _ _) board depth value bound move = do
 getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
 getValue (ChessCache table _ _) board = Map.lookup table board
 
-putPawnEvaluation :: ChessCache -> Int64 -> Float -> IO ()
+putPawnEvaluation :: ChessCache -> Int64 -> Int -> IO ()
 putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = Map.insert pawns' pawnPosition value
 
-getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Float)
+getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Int)
 getPawnEvaluation (ChessCache _ pawns' _) position = Map.lookup pawns' position
 
 putKillerMove :: ChessCache -> Int -> Move -> IO ()

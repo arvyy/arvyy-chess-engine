@@ -118,12 +118,12 @@ partitionAndSortCaptureMoves board moves = {-# SCC "m_partitionAndSortCaptureMov
 
     where
         captureScore :: ChessPieceType -> Int
-        captureScore Pawn = 1
-        captureScore Horse = 3
-        captureScore Bishop = 3
-        captureScore Rock = 5
-        captureScore Queen = 9
-        captureScore King = 999
+        captureScore Pawn = 100
+        captureScore Horse = 300
+        captureScore Bishop = 300
+        captureScore Rock = 500
+        captureScore Queen = 900
+        captureScore King = 9999
 
         augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
         augmentWithCaptureInfo move =
@@ -152,15 +152,15 @@ horizonEval cache depth board alpha beta =  {-# SCC "m_horizonEval" #-}
     -- examine only captures when not in check
     -- apply "delta pruning", only consider captures
     -- where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
-    deltaBuffer = 2.0
+    deltaBuffer = 200
     examineCaptureMove :: PositionEval -> Move -> Bool
     examineCaptureMove pat move =
       case pieceOnSquare board (toCol move) (toRow move) of
-            Just (ChessPiece _ Pawn) -> evalAdd pat (1 + deltaBuffer) > alpha
-            Just (ChessPiece _ Bishop) -> evalAdd pat (3 + deltaBuffer) > alpha
-            Just (ChessPiece _ Horse) -> evalAdd pat (3 + deltaBuffer) > alpha
-            Just (ChessPiece _ Rock) -> evalAdd pat (5 + deltaBuffer) > alpha
-            Just (ChessPiece _ Queen) -> evalAdd pat (9 + deltaBuffer) > alpha
+            Just (ChessPiece _ Pawn) -> evalAdd pat (100 + deltaBuffer) > alpha
+            Just (ChessPiece _ Bishop) -> evalAdd pat (300 + deltaBuffer) > alpha
+            Just (ChessPiece _ Horse) -> evalAdd pat (300 + deltaBuffer) > alpha
+            Just (ChessPiece _ Rock) -> evalAdd pat (500 + deltaBuffer) > alpha
+            Just (ChessPiece _ Queen) -> evalAdd pat (900 + deltaBuffer) > alpha
             _ -> False
     
     sortMoves moves =
@@ -188,7 +188,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
   where
     foldCandidates :: ChessCache -> [(Move, ChessBoard)] -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
     foldCandidates cache candidates =
-      foldCandidates' cache True False (PositionEval $ (-1) / 0, [], Nothing) candidates alpha beta 0 (False, False, False) nodesParsed
+      foldCandidates' cache True False (PositionEval $ (-10000), [], Nothing) candidates alpha beta 0 (False, False, False) nodesParsed
 
 -- TODO struct for passing arguments around?
     foldCandidates' :: ChessCache -> Bool -> Bool -> (PositionEval, [Move], Maybe Move) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Int -> (Bool, Bool, Bool) -> Int -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
@@ -234,7 +234,7 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
             else (foldCandidates' cache False raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False, False) newNodesParsed)
 
       | (not nullWindowTried) && not first && raisedAlpha = do
-          let nullBeta = case alpha of PositionEval v -> PositionEval (v + 0.0001)
+          let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
               params' =
                 params
                   { depth = (depth - 1),
@@ -287,8 +287,8 @@ evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -
 evaluateIteration cache board lastDepthBest depth showDebug =
   let params =
         EvaluateParams
-          { alpha = PositionEval $ (-1) / 0,
-            beta = PositionEval $ 1 / 0,
+          { alpha = PositionEval $ (-10000),
+            beta = PositionEval $ 10000,
             depth = depth,
             maxDepth = depth,
             ply = 0,
@@ -340,4 +340,4 @@ collectEvaluationInfo player nodesParsed (PositionEval value) moves =
     let m = if player == White then 1 else -1
     in  [ "info nodes " ++ show nodesParsed
         , "info pv " ++ (intercalate " " (mapMaybe moveToString moves))
-        , "info score cp " ++ show (floor (value * 100 * m))]
+        , "info score cp " ++ show (value * m)]
