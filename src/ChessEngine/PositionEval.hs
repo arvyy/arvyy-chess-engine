@@ -184,8 +184,44 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
   | depth <= 0 = do
       eval <- liftIO $ horizonEval cache 10 board alpha beta
       return ((eval, [], Nothing), nodesParsed, Exact)
-  | otherwise = foldCandidates cache candidates
+  | otherwise = do
+      -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
+      -- only run when we're in a null window context (TODO why not set null window here?)
+      -- don't use null move in end game (when side to move has one minor piece or less) to avoig zugzwang
+    tryNullMove <- if allowNullMove 
+                        && isNullWindow alpha beta
+                        && depth > 3 
+                        && (not $ playerInCheck board) 
+                        && (quickMaterialCount board (turn board) > 3)
+                    then do
+                        pat <- liftIO $ finalDepthEval cache board
+                        return $ pat > beta
+                    else
+                        return False
+    if tryNullMove
+    then do
+        (newNodesParsed, isCut) <- evaluateNullMove
+        if isCut
+        then return ((beta, [], Nothing), newNodesParsed, LowerBound)
+        else foldCandidates cache candidates
+    else foldCandidates cache candidates
   where
+    
+    evaluateNullMove :: App (Int, Bool)
+    evaluateNullMove = do
+        let params' = params 
+                { allowNullMove = False
+                , depth = depth - 3 -- R = 2
+                , board = board { turn = otherPlayer (turn board)}
+                , alpha = negateEval beta
+                , beta = negateEval alpha
+                }
+        ((moveValue, moves), newNodesParsed) <- do
+          ((v, moves), nodes) <- evaluate' cache params'
+          return ((negateEval v, moves), nodes)
+        return (newNodesParsed, moveValue > beta)
+
+
     foldCandidates :: ChessCache -> [(Move, ChessBoard)] -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
     foldCandidates cache candidates =
       foldCandidates' cache True False (PositionEval $ (-10000), [], Nothing) candidates alpha beta 0 (False, False, False) nodesParsed
@@ -194,26 +230,6 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
     foldCandidates' :: ChessCache -> Bool -> Bool -> (PositionEval, [Move], Maybe Move) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Int -> (Bool, Bool, Bool) -> Int -> App ((PositionEval, [Move], Maybe Move), Int, TableValueBound)
     foldCandidates' cache first raisedAlpha bestMoveValue@(bestEval, _, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (nullMoveTried, lmrTried, nullWindowTried) nodesParsed
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
-      -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
-      -- don't use null move in end game (when opponent  has more than on minor piece) to avoig zugzwang
-      -- currently disabled due to buggy implementation
-      | not nullMoveTried && allowNullMove && depth >= 4 && (not $ playerInCheck candidateBoard) && (quickMaterialCount candidateBoard (turn candidateBoard) > 3) = do
-          let params' =
-                params
-                  { allowNullMove = False,
-                    ply = ply + 1,
-                    depth = depth - 3, -- R = 2
-                    board = candidateBoard {turn = if (turn board) == White then Black else White},
-                    nodesParsed = nodesParsed,
-                    alpha = negateEval beta,
-                    beta = negateEval alpha }
-          ((moveValue, moves), newNodesParsed) <- do
-            ((v, moves), nodes) <- evaluate' cache params'
-            return ((negateEval v, moves), nodes)
-          if moveValue > beta
-            then -- passing up move still causes it to exceed beta -- cut off
-              return ((beta, candidateMove : moves, Just candidateMove), newNodesParsed, LowerBound)
-            else (foldCandidates' cache first raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, lmrTried, nullWindowTried) newNodesParsed)
 
       | (not nullWindowTried) && not first && not (isNullWindow alpha beta) = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
@@ -306,8 +322,7 @@ evaluateIteration cache board lastDepthBest depth showDebug =
             nodesParsed = 0,
             currentBest = lastDepthBest,
             -- TODO return null moves; currently it hallucinates and blunders pieces :(
-            -- allowNullMove = True
-            allowNullMove = False,
+            allowNullMove = True,
             showUCIInfo = showDebug
             }
    in do
