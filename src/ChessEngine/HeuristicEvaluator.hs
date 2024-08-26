@@ -4,13 +4,10 @@ module ChessEngine.HeuristicEvaluator
 ( finalDepthEval, finalDepthEvalExplained )
 where
 
-import Control.Monad.ST
 import ChessEngine.Board
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
 import Data.Foldable
-import Control.Monad.Trans.State
-import Data.Time.Calendar.MonthDay (monthAndDayToDayOfYear)
 
 evaluatePawns :: ChessCache -> ChessBoard -> IO Int
 evaluatePawns cache board = do
