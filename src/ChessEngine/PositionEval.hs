@@ -67,7 +67,7 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
             ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
             when (bound == LowerBound) $ liftIO $
                  case moves' of
-                    move : _ -> when (not $ isCaptureMove board move) $ putKillerMove cache ply move
+                    move : _ -> unless (isJust $ getCaptureInfo board move) $ putKillerMove cache ply move
                     _ -> return ()
             liftIO $ putValue cache board depth eval' bound moves'
             let result = ((eval', moves'), nodes + 1)
@@ -127,8 +127,7 @@ partitionAndSortCaptureMoves board moves = {-# SCC "m_partitionAndSortCaptureMov
         augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
         augmentWithCaptureInfo move =
             let diff = do 
-                    (ChessPiece _ capturedType) <- pieceOnSquare board (toCol move) (toRow move)
-                    (ChessPiece _ capturingType) <- pieceOnSquare board (fromCol move) (fromRow move)
+                    (capturingType, capturedType) <- getCaptureInfo board move
                     return $ captureScore capturedType - captureScore capturingType
             in (move, diff)
 

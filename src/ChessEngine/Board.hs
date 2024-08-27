@@ -30,7 +30,7 @@ module ChessEngine.Board
     initialBoard,
     applyMove,
     applyMoveUnsafe,
-    isCaptureMove,
+    getCaptureInfo,
     playerInCheck,
     playerKingPosition,
     parseMove,
@@ -761,11 +761,24 @@ applyMove board move = do
   matchedCandidate <- find (\move' -> move' == move) candidates
   candidateMoveLegal board matchedCandidate
 
-isCaptureMove :: ChessBoard -> Move -> Bool
-isCaptureMove board move =
-  case pieceOnSquare board (toCol move) (toRow move) of
-        Just _ -> True
-        _ -> False
+-- return Just (capturingType, capturedType) if this is capture
+-- Nothing otherwise
+{-# INLINE getCaptureInfo #-}
+getCaptureInfo :: ChessBoard -> Move -> Maybe (ChessPieceType, ChessPieceType)
+getCaptureInfo board move =
+    case pieceOnSquare board (fromCol move) (fromRow move) of
+        Just (ChessPiece _ Pawn) ->
+            case pieceOnSquare board (toCol move) (toRow move) of
+                Just (ChessPiece _ attackedPieceType) -> Just (Pawn, attackedPieceType)
+                -- if columns don't match but there was nothing on the target square, then this must have been en passant capture
+                _ -> if (fromCol move /= toCol move && (enPassant board) == Just (toCol move))
+                     then Just (Pawn, Pawn)
+                     else Nothing
+        Just (ChessPiece _ attackingPieceType) ->
+            case pieceOnSquare board (toCol move) (toRow move) of
+                Just (ChessPiece _ attackedPieceType) -> Just (attackingPieceType, attackedPieceType)
+                _ -> Nothing
+        Nothing -> Nothing
 
 -- returns parsed pieces + rest of input
 loadFenPieces :: String -> (Int, Int) -> ChessBoardPositions -> Maybe (ChessBoardPositions, String)
