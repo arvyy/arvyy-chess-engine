@@ -191,13 +191,12 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
   | otherwise = do
       -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
       -- only run when we're in a null window context (TODO why not set null window here?)
-      -- don't use null move in end game (when side to move has one minor piece or less) to avoig zugzwang
-      -- TODO allowNullMove turned off due to buggy behavior, FIXME
+      -- don't use null move in end game (when side to move has rook or less) to avoig zugzwang
     tryNullMove <- if allowNullMove 
                         && isNullWindow alpha beta
                         && depth > 3 
                         && (not $ playerInCheck board) 
-                        && (quickMaterialCount board (turn board) > 3)
+                        && (quickMaterialCount board (turn board) > 5)
                     then do
                         pat <- liftIO $ finalDepthEval cache board
                         return $ pat > beta
@@ -252,8 +251,11 @@ evaluate'' cache params@EvaluateParams { alpha, beta, depth, maxDepth, ply, boar
           -- found better eval with lower depth and/or window -- retry
           if eval > alpha
             then
-              -- retry full search
-              (foldCandidates' False raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, True) newNodesParsed)
+                if tryLmr
+                -- retry with null window but without lmr
+                then (foldCandidates' False raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, False) newNodesParsed)
+                -- retry full search
+                else (foldCandidates' False raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, True) newNodesParsed)
             else
               (foldCandidates' False raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False) newNodesParsed)
 
