@@ -327,7 +327,7 @@ evaluateIteration cache board lastDepthBest depth nodes showDebug =
             board = board,
             nodesParsed = nodes,
             currentBest = lastDepthBest,
-            allowNullMove = False,
+            allowNullMove = True,
             showUCIInfo = showDebug
             }
    in do
