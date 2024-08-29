@@ -212,10 +212,6 @@ instance Hashable PlayerColor
 
 instance Hashable ChessBoardPositions
 
-instance Hashable ChessBoard where
-    hashWithSalt salt ChessBoard { turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle } =
-        hashWithSalt salt (turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle)
-
 data PromoChessPieceType = NoPromo | PromoHorse | PromoRock | PromoQueen | PromoBishop deriving (Show, Eq, Enum)
 
 newtype Move = Move Int64 deriving (Eq)

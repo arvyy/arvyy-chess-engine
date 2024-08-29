@@ -24,6 +24,10 @@ sprt:
 	(PWD=$$(pwd) ; cd ${ENGINE2_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE2)
 	${FAST_CHESS_EXE} -log file=sprt.log level=trace -pgnout file=games.pgn -engine cmd=ENGINE1 name=ENGINE1 -engine cmd=ENGINE2 name=ENGINE2 -each tc=10+2 -rounds 20 -repeat -concurrency 2 -randomseed -openings file=8moves_v3.pgn format=pgn -sprt elo0=0 elo1=10 alpha=0.05 beta=0.05
 
+run-file:
+	cabal build
+	cat testinput.txt | $$(cabal exec which chessengine_uci)
+
 profile:
 	cabal build --enable-profiling --enable-library-profiling
 	cat profile_input.txt | $$(cabal exec which chessengine_uci) +RTS -p
