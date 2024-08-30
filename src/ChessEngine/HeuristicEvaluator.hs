@@ -122,38 +122,35 @@ scorePieceThreats board piece =
   let isOwnSide y = case piece of
         (_, _, ChessPiece White _) -> y < 4
         _ -> y > 5
-      (ownSide, opponentSide) =
+      mobilityScore =
         foldl'
-          (\(own, opponent) (_, y) -> if isOwnSide y then (own + 1.0, opponent) else (own, opponent + 1.0))
-          (0.0, 0.0)
+          (\score (x, y) -> if isOwnSide y then score + 1 else score + 1.5)
+          0.0
           (pieceThreats board piece)
       (_, _, ChessPiece _ pieceType) = piece
       (multiplier, maxBonus) = case pieceType of
         -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
         -- without developing other pieces
         -- TODO fix this by punishing evaluation for pieces being in starting position?
-        Pawn -> (1, 100)
-        Horse -> (1.5, 200)
-        Bishop -> (1, 200)
-        Rock -> (2, 300)
-        Queen -> (0.5, 300)
-        King -> (0.5, 100)
-   in floor $ min (100 * log (1 + ownSide + (opponentSide * 1.5)) * multiplier) maxBonus
+        Horse -> (300, 200)
+        Bishop -> (100, 200)
+        Rock -> (100, 200)
+        Queen -> (50, 200)
+        _ -> (0, 0)
+   in floor $ min (log (1 + mobilityScore) * multiplier) maxBonus
 
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
-        Pawn -> 0.4
-        King -> 0.2
-        Bishop -> 1
-        Horse -> 1.5
-        Rock -> 1.2
-        Queen -> 0.0
+        King -> 50
+        Bishop -> 100
+        Horse -> 200
+        Rock -> 150
         _ -> 0.0
-      score = (squareRating ** 1.8) * maxBonus
-   in floor $ score * 100
+      score = squareRating * maxBonus
+   in floor score
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
