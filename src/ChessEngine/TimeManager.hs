@@ -12,8 +12,8 @@ computeDeadline player fullMoves whiteTime blackTime whiteInc blackInc =
                  then whiteTime
                  else blackTime
         multiplier
-            | fullMoves <= 4 = 0.02
+            | fullMoves <= 3 = 0.02
             | fullMoves > 25 = 0.04
-            | otherwise = 0.07
+            | otherwise = 0.10
     in floor $ max 500.0 ((fromIntegral myTime) * multiplier)
 
