@@ -26,7 +26,7 @@ sprt:
 
 run-file:
 	cabal build
-	cat testinput.txt | $$(cabal exec which chessengine_uci)
+	bash -c "( cat testinput.txt ; sleep 10 ; echo 'quit' ) | $$(cabal exec which chessengine_uci)"
 
 profile:
 	cabal build --enable-profiling --enable-library-profiling
