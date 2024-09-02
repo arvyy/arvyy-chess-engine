@@ -7,6 +7,7 @@ import Control.Monad (forM_)
 import Control.Applicative ((<|>))
 import Data.Maybe (fromJust)
 import Data.IORef
+import ChessEngine.EvaluatorData (create)
 
 -- https://www.chessprogramming.org/Bratko-Kopec_Test
 positions :: [(String, String)]
@@ -39,8 +40,9 @@ positions = [
 computePosition :: String -> String -> IO String
 computePosition fen expectedBestMove = do
     let (board, _) = fromJust $ loadFen fen
+    cache <- create
     evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False }
-    EvaluateResult { nodesParsed, moves = (move:rest) } <- evaluate evalResultRef board 4
+    EvaluateResult { nodesParsed, moves = (move:rest) } <- evaluate evalResultRef cache board 8
     return $ "Expected best move: " ++ expectedBestMove ++ ", found move: " ++ (show move) ++ ". Nodes: " ++ (show nodesParsed)
 
 main :: IO ()

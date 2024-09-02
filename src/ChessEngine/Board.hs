@@ -51,6 +51,7 @@ import Data.Foldable (find)
 import ChessEngine.PrecomputedCandidateMoves
 import Text.Read (readMaybe)
 import Data.List (unfoldr)
+import Control.Applicative ((<|>))
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -869,7 +870,7 @@ loadFen input = do
   ((wk, wq, bk, bq), input) <- loadCastlingRights input (False, False, False, False)
   (enPassant, input) <- loadEnPassant input
   let input' = skipUntilWhitespace input
-  (fullMoves, input'') <- loadFullMoves input'
+  (fullMoves, input'') <- loadFullMoves input' <|> Just (0, input')
   let board =
         ChessBoard
           { turn = turn,

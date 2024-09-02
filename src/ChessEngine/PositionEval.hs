@@ -19,6 +19,7 @@ import Data.Maybe (isJust, mapMaybe)
 import Control.Monad.Trans.Reader
 import Data.IORef
 import Control.Monad.IO.Class (liftIO)
+import System.IO
 
 type BestMove = (PositionEval, [Move])
 
@@ -55,7 +56,7 @@ data EvaluateResult = EvaluateResult
 type App = ReaderT (IORef EvaluateResult) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
-evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply } =
+evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply, maxDepth } =
   if is3foldRepetition board
   then return ((PositionEval 0, []), 0)
   else do
@@ -69,11 +70,11 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
                  case moves' of
                     move : _ -> unless (isJust $ getCaptureInfo board move) $ putKillerMove cache ply move
                     _ -> return ()
-            liftIO $ putValue cache board depth eval' bound moves'
+            liftIO $ putValue cache board depth (fullMoves board) eval' bound moves'
             let result = ((eval', moves'), nodes + 1)
             return result
       case tableHit of
-        Just (TranspositionValue bound eval cachedDepth bestMoveLine) ->
+        Just (TranspositionValue bound eval cachedDepth fullMoves' bestMoveLine) -> do
           if (cachedDepth < depth)
           then doSearch
           else if ((bound == Exact) ||
@@ -95,7 +96,7 @@ sortCandidates cache board ply candidates =
     partitionAndSortCacheMoves moves = do
         maybeCachedMove <- getValue cache board
         return $ case maybeCachedMove of
-            Just (TranspositionValue _ _ _ (move : _)) -> partition (\m -> move == m) moves
+            Just (TranspositionValue _ _ _ _ (move : _)) -> partition (\m -> move == m) moves
             _ -> ([], moves)
 
     partitionKillerMoves :: [Move] -> IO ([Move], [Move])
@@ -340,12 +341,12 @@ iterateM' f mx n = do
     then mx
     else iterateM' f (mx >>= f) (n - 1)
 
-evaluate :: IORef EvaluateResult -> ChessBoard -> Int -> IO EvaluateResult
-evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResultRef
+evaluate :: IORef EvaluateResult -> ChessCache -> ChessBoard -> Int -> IO EvaluateResult
+evaluate evalResultRef cache board targetDepth = runReaderT evaluateInReader evalResultRef
   where
     evaluateInReader :: App EvaluateResult
     evaluateInReader = do
-        (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
+        (_, (eval, moves), nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
         let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moves
         env <- ask
         result' <- liftIO $ readIORef env
@@ -353,18 +354,22 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
         liftIO $ writeIORef env result
         return result
 
-    computeNext :: (Int, BestMove, ChessCache, Int) -> App (Int, BestMove, ChessCache, Int)
+    computeNext :: (Int, BestMove, Int) -> App (Int, BestMove, Int)
     computeNext current = do
-      let (depth, lastDepthBest, cache, nodesParsed) = current
+      let (depth, lastDepthBest@(eval, moves), nodesParsed) = current
       env <- ask
       result <- liftIO $ readIORef env
+      -- repeatedly update between depth iteration and not just on alpha improvement
+      -- in case result was pulled directly from TT from a previous full move search
+      let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moves
+      let result' = result { moves = moves, nodesParsed = nodesParsed, finished = True, evaluation = eval, latestEvaluationInfo = lastEvalInfo }
+      liftIO $ writeIORef env result'
       (thisDepthBest, nodesParsed) <- evaluateIteration cache board lastDepthBest (depth + 1) nodesParsed (showDebug result)
-      return $ (depth + 1, thisDepthBest, cache, nodesParsed)
+      return $ (depth + 1, thisDepthBest, nodesParsed)
     startingDepth = 1
-    firstEvaluation :: App (Int, (PositionEval, [Move]), ChessCache, Int)
+    firstEvaluation :: App (Int, (PositionEval, [Move]), Int)
     firstEvaluation = do
-      cache <- liftIO create
-      computeNext ((startingDepth - 1), (PositionEval 0, []), cache, 0)
+      computeNext ((startingDepth - 1), (PositionEval 0, []), 0)
 
 collectEvaluationInfo :: PlayerColor -> Int -> PositionEval -> [Move] -> [String]
 collectEvaluationInfo player nodesParsed (PositionEval value) moves =

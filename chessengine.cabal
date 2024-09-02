@@ -18,7 +18,8 @@ common deps
      transformers >=0.6,
      time >=1.9,
      stm >=2.5,
-     regex-pcre-builtin >=0.95
+     regex-pcre-builtin >=0.95,
+     vector
 
 
 library chess-internal
