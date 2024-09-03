@@ -54,6 +54,18 @@ data EvaluateResult = EvaluateResult
   }
   deriving (Show)
 
+data CandidatesFold = CandidatesFold
+  { raisedAlpha :: Bool,
+    bestMoveValue :: (PositionEval, [Move]),
+    candidates :: [(Move, ChessBoard)],
+    alpha :: PositionEval,
+    beta :: PositionEval,
+    siblingIndex :: Int,
+    lmrTried :: Bool,
+    nullWindowTried :: Bool,
+    nodesParsed :: Int
+  }
+
 type App = ReaderT (IORef EvaluateResult) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
@@ -237,11 +249,11 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates =
-      foldCandidates' False (PositionEval $ (-10000), []) candidates alpha beta 0 (False, False) nodesParsed
+      foldCandidates' CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), candidates = candidates, alpha = alpha, beta = beta, siblingIndex = 0, lmrTried = False, nullWindowTried = False, nodesParsed = nodesParsed}
 
     -- TODO struct for passing arguments around?
-    foldCandidates' :: Bool -> (PositionEval, [Move]) -> [(Move, ChessBoard)] -> PositionEval -> PositionEval -> Int -> (Bool, Bool) -> Int -> App (BestMove, Int, TableValueBound)
-    foldCandidates' raisedAlpha bestMoveValue@(bestEval, _) ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (lmrTried, nullWindowTried) nodesParsed
+    foldCandidates' :: CandidatesFold -> App (BestMove, Int, TableValueBound)
+    foldCandidates' candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), candidates = ((candidateMove, candidateBoard) : restCandidates), alpha, beta, siblingIndex, lmrTried, nullWindowTried, nodesParsed}
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
       | (not nullWindowTried) && siblingIndex > 0 && not (isNullWindow alpha beta) = do
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
@@ -261,10 +273,10 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             then
               if tryLmr
                 then -- retry with null window but without lmr
-                  (foldCandidates' raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, False) newNodesParsed)
+                  foldCandidates' candidatesFold {lmrTried = True, nodesParsed = newNodesParsed}
                 else -- retry full search
-                  (foldCandidates' raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, True) newNodesParsed)
-            else (foldCandidates' raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False) newNodesParsed)
+                  foldCandidates' candidatesFold {lmrTried = True, nullWindowTried = True, nodesParsed = newNodesParsed}
+            else foldCandidates' candidatesFold {candidates = restCandidates, siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
 
       -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
       -- evaluate with reduced depth (LMR).
@@ -282,8 +294,9 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           let (moveValue@(eval, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
           if eval > bestEval
             then -- if found better move, re-evaluate with proper depth
-              (foldCandidates' raisedAlpha bestMoveValue ((candidateMove, candidateBoard) : restCandidates) alpha beta siblingIndex (True, nullWindowTried) newNodesParsed)
-            else (foldCandidates' raisedAlpha bestMoveValue restCandidates alpha beta (siblingIndex + 1) (False, False) newNodesParsed)
+              foldCandidates' candidatesFold {lmrTried = True, nodesParsed = newNodesParsed}
+            else
+              foldCandidates' candidatesFold {candidates = restCandidates, siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
       | otherwise = do
           let params' =
                 params
@@ -315,10 +328,10 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                  in if (v > alpha)
                       then (v, True)
                       else (alpha, raisedAlpha)
-          foldCandidates' raisedAlpha' newBestMoveValue restCandidates alpha' beta (siblingIndex + 1) (False, False) newNodesParsed
+          foldCandidates' candidatesFold {raisedAlpha = raisedAlpha', bestMoveValue = newBestMoveValue, candidates = restCandidates, alpha = alpha', siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
       where
         tryLmr = not lmrTried && siblingIndex > 1 && depth > 2
-    foldCandidates' raisedAlpha bestMoveValue [] _ _ _ _ nodesParsed
+    foldCandidates' CandidatesFold {raisedAlpha, bestMoveValue, nodesParsed}
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
       | otherwise = return (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
