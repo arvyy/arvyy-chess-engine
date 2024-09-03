@@ -87,36 +87,30 @@ parseUCICommand input
       depth <- readMaybe depthStr
       let props' = props {depth = Just depth}
       tryParseGoParts' rest props'
-
     tryParseGoParts' ("wtime" : whiteTimeStr : rest) props = do
       wtime <- readMaybe whiteTimeStr
       let props' = props {whiteTime = Just wtime}
       tryParseGoParts' rest props'
-
     tryParseGoParts' ("btime" : blackTimeStr : rest) props = do
       btime <- readMaybe blackTimeStr
       let props' = props {blackTime = Just btime}
       tryParseGoParts' rest props'
-
     tryParseGoParts' ("winc" : whiteIncStr : rest) props = do
       winc <- readMaybe whiteIncStr
       let props' = props {whiteIncrement = Just winc}
       tryParseGoParts' rest props'
-
     tryParseGoParts' ("binc" : blackIncStr : rest) props = do
       binc <- readMaybe blackIncStr
       let props' = props {blackIncrement = Just binc}
       tryParseGoParts' rest props'
-
     tryParseGoParts' ("movetime" : movetimeStr : rest) props = do
       movetime' <- readMaybe movetimeStr
-      let props' = props { moveTime = Just movetime' }
+      let props' = props {moveTime = Just movetime'}
       tryParseGoParts' rest props'
 
     -- skip unrecognized values
     tryParseGoParts' (key : value : rest) props =
       tryParseGoParts' rest props
-
     tryParseGoParts' _ props = Just props
 
     tryParsePosition =

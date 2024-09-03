@@ -1,7 +1,7 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -37,20 +37,20 @@ module ChessEngine.Board
     moveToString,
     loadFen,
     pieceThreats,
-    boardToFen
+    boardToFen,
   )
 where
 
+import ChessEngine.PrecomputedCandidateMoves
 import Data.Bits
 import Data.Char
+import Data.Foldable (find)
 import Data.Hashable
 import Data.Int (Int64)
+import Data.List (unfoldr)
 import Data.Maybe
 import GHC.Generics (Generic)
-import Data.Foldable (find)
-import ChessEngine.PrecomputedCandidateMoves
 import Text.Read (readMaybe)
-import Data.List (unfoldr)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -92,7 +92,7 @@ playerPositionsToList _ _ [] = []
 
 {-# INLINE playerKingPosition #-}
 playerKingPosition :: ChessBoard -> PlayerColor -> (Int, Int)
-playerKingPosition ChessBoard { pieces = ChessBoardPositions {black, white, kings}} color =
+playerKingPosition ChessBoard {pieces = ChessBoardPositions {black, white, kings}} color =
   let bitmap = (if color == White then white else black) .&. kings
    in bitIndexToCoords (countTrailingZeros bitmap)
 
@@ -120,17 +120,18 @@ coordsToBitIndex x y =
 clearPosition :: ChessBoardPositions -> Int -> Int -> ChessBoardPositions
 clearPosition positions@(ChessBoardPositions black white bishops horses queens kings pawns rocks) x y =
   if not $ testBit (black .|. white) bitIndex
-  then positions
-  else ChessBoardPositions
-    { black = clearBit black bitIndex,
-      white = clearBit white bitIndex,
-      bishops = clearBit bishops bitIndex,
-      horses = clearBit horses bitIndex,
-      queens = clearBit queens bitIndex,
-      kings = clearBit kings bitIndex,
-      pawns = clearBit pawns bitIndex,
-      rocks = clearBit rocks bitIndex
-    }
+    then positions
+    else
+      ChessBoardPositions
+        { black = clearBit black bitIndex,
+          white = clearBit white bitIndex,
+          bishops = clearBit bishops bitIndex,
+          horses = clearBit horses bitIndex,
+          queens = clearBit queens bitIndex,
+          kings = clearBit kings bitIndex,
+          pawns = clearBit pawns bitIndex,
+          rocks = clearBit rocks bitIndex
+        }
   where
     bitIndex = coordsToBitIndex x y
 
@@ -155,12 +156,12 @@ setPosition positions x y (ChessPiece color pieceType) =
 {-# INLINE quickMaterialCount #-}
 quickMaterialCount :: ChessBoard -> PlayerColor -> Int
 quickMaterialCount board player =
-    let p = pieces board
-        playerBits = if player == White then (white p) else (black p)
-    in   (popCount (bishops p .&. playerBits)) * 3
-       + (popCount (horses p .&. playerBits)) * 3
-       + (popCount (rocks p .&. playerBits)) * 5
-       + (popCount (queens p .&. playerBits)) * 9
+  let p = pieces board
+      playerBits = if player == White then (white p) else (black p)
+   in (popCount (bishops p .&. playerBits)) * 3
+        + (popCount (horses p .&. playerBits)) * 3
+        + (popCount (rocks p .&. playerBits)) * 5
+        + (popCount (queens p .&. playerBits)) * 9
 
 pieceOnSquare' :: ChessBoardPositions -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y = do
@@ -205,8 +206,9 @@ data ChessBoard = ChessBoard
     blackQueenCastle :: !Bool,
     -- linked list of boards leading to this one for purposes of
     -- 3fold repetition detection; cut off when doing irreversible move like capture / pawn move
-    prev :: Maybe ChessBoard }
-    deriving (Eq, Show, Ord)
+    prev :: Maybe ChessBoard
+  }
+  deriving (Eq, Show, Ord)
 
 instance Hashable PlayerColor
 
@@ -216,18 +218,17 @@ data PromoChessPieceType = NoPromo | PromoHorse | PromoRock | PromoQueen | Promo
 
 newtype Move = Move Int64 deriving (Eq)
 
-instance Show Move
-    where show move@(Move bitRepr) = case moveToString move of 
-                        Just str -> str
-                        _ -> "<Invalid move " ++ (show bitRepr) ++ ">"
-    
+instance Show Move where
+  show move@(Move bitRepr) = case moveToString move of
+    Just str -> str
+    _ -> "<Invalid move " ++ (show bitRepr) ++ ">"
 
 {-# INLINE createMove #-}
 createMove :: Int -> Int -> Int -> Int -> PromoChessPieceType -> Move
 createMove fromCol fromRow toCol toRow promotion =
-    let promo = fromIntegral $ fromEnum promotion
-        bitRepr = (shiftL promo 12) .|. (shiftL (fromCol - 1) 9) .|. (shiftL (fromRow - 1) 6) .|. (shiftL (toCol - 1) 3) .|. (toRow - 1)
-    in Move (fromIntegral bitRepr)
+  let promo = fromIntegral $ fromEnum promotion
+      bitRepr = (shiftL promo 12) .|. (shiftL (fromCol - 1) 9) .|. (shiftL (fromRow - 1) 6) .|. (shiftL (toCol - 1) 3) .|. (toRow - 1)
+   in Move (fromIntegral bitRepr)
 
 {-# INLINE fromCol #-}
 fromCol :: Move -> Int
@@ -332,16 +333,15 @@ otherPlayer Black = White
 otherPlayer White = Black
 
 isPlayerOnSquare :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
-isPlayerOnSquare ChessBoard { pieces = ChessBoardPositions{ white } } White x y =
-    let bitIndex = coordsToBitIndex x y
-    in testBit white bitIndex
-isPlayerOnSquare ChessBoard { pieces = ChessBoardPositions{ black } } Black x y =
-    let bitIndex = coordsToBitIndex x y
-    in testBit black bitIndex
+isPlayerOnSquare ChessBoard {pieces = ChessBoardPositions {white}} White x y =
+  let bitIndex = coordsToBitIndex x y
+   in testBit white bitIndex
+isPlayerOnSquare ChessBoard {pieces = ChessBoardPositions {black}} Black x y =
+  let bitIndex = coordsToBitIndex x y
+   in testBit black bitIndex
 
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board = pieceOnSquare' (pieces board)
-
 
 {-# INLINE hasPieceOnSquare #-}
 hasPieceOnSquare :: ChessBoard -> Int -> Int -> ChessPiece -> Bool
@@ -392,7 +392,7 @@ applyMoveUnsafe board move =
         | otherwise = applyNormalMove oldPieces player pieceType
       whiteKingRockTooken = (player == Black && x' == 8 && y' == 1)
       whiteKingCastle' =
-          whiteKingCastle board
+        whiteKingCastle board
           && not (isCastleMove && player == White)
           && case (player, pieceType) of
             (White, King) -> False
@@ -402,7 +402,7 @@ applyMoveUnsafe board move =
 
       whiteQueenRockTooken = (player == Black && x' == 1 && y' == 1)
       whiteQueenCastle' =
-          whiteQueenCastle board
+        whiteQueenCastle board
           && not (isCastleMove && player == White)
           && case (player, pieceType) of
             (White, King) -> False
@@ -412,7 +412,7 @@ applyMoveUnsafe board move =
 
       blackKingRockTooken = (player == White && x' == 8 && y' == 8)
       blackKingCastle' =
-          blackKingCastle board
+        blackKingCastle board
           && not (isCastleMove && player == Black)
           && case (player, pieceType) of
             (Black, King) -> False
@@ -422,7 +422,7 @@ applyMoveUnsafe board move =
 
       blackQueenRockTooken = (player == White && x' == 1 && y' == 8)
       blackQueenCastle' =
-          blackQueenCastle board
+        blackQueenCastle board
           && not (isCastleMove && player == Black)
           && case (player, pieceType) of
             (Black, King) -> False
@@ -430,9 +430,10 @@ applyMoveUnsafe board move =
             _ -> True
           && not blackQueenRockTooken
       isIrreversible = pieceType == Pawn || isCastleMove || isJust (pieceOnSquare' oldPieces x' y')
-      linkedBoard = if isIrreversible
-                    then Nothing
-                    else Just board
+      linkedBoard =
+        if isIrreversible
+          then Nothing
+          else Just board
    in board
         { pieces = newPieces,
           enPassant = if isDoubleDipMove then Just x else Nothing,
@@ -484,24 +485,23 @@ applyMoveUnsafe board move =
 -- return if given board is in 3fold repetition state
 is3foldRepetition :: ChessBoard -> Bool
 is3foldRepetition board = seenCount >= 2
-    where
-        isSamePos board1 board2 =
-            ((pieces board1) == (pieces board2)) &&
-            ((blackQueenCastle board1) == (blackQueenCastle board2)) &&
-            ((blackKingCastle board1) == (blackKingCastle board2)) &&
-            ((whiteQueenCastle board1) == (whiteQueenCastle board2)) &&
-            ((whiteKingCastle board1) == (whiteKingCastle board2)) &&
-            ((enPassant board1) == (enPassant board2))
+  where
+    isSamePos board1 board2 =
+      ((pieces board1) == (pieces board2))
+        && ((blackQueenCastle board1) == (blackQueenCastle board2))
+        && ((blackKingCastle board1) == (blackKingCastle board2))
+        && ((whiteQueenCastle board1) == (whiteQueenCastle board2))
+        && ((whiteKingCastle board1) == (whiteKingCastle board2))
+        && ((enPassant board1) == (enPassant board2))
 
-        unfoldBoards b@ChessBoard { prev } =
-            case prev of
-                Just (ChessBoard { prev = Just b'}) -> b : unfoldBoards b'
-                _ -> [b]
+    unfoldBoards b@ChessBoard {prev} =
+      case prev of
+        Just (ChessBoard {prev = Just b'}) -> b : unfoldBoards b'
+        _ -> [b]
 
-        otherBoards = drop 1 $ unfoldBoards board
+    otherBoards = drop 1 $ unfoldBoards board
 
-        seenCount = length $ filter (isSamePos board) otherBoards
-            
+    seenCount = length $ filter (isSamePos board) otherBoards
 
 inBounds :: Int -> Int -> Bool
 inBounds x y = x >= 1 && x <= 8 && y >= 1 && y <= 8
@@ -519,24 +519,29 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
 pieceThreats board (x, y, ChessPiece color King) =
   let candidates = filter (/= (x, y)) [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
-   in {-# SCC "m_pieceThreats_King" #-} filter
+   in {-# SCC "m_pieceThreats_King" #-}
+      filter
         (emptyOrOccupiedByOpponent board color)
         candidates
 pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} (pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop))
-pieceThreats board (x, y, ChessPiece color Pawn) = {-# SCC "m_pieceThreats_Pawn" #-}
+pieceThreats board (x, y, ChessPiece color Pawn) =
+  {-# SCC "m_pieceThreats_Pawn" #-}
   let nextRow = if color == Black then y - 1 else y + 1
       candidates = [(x - 1, nextRow), (x + 1, nextRow)]
    in filter
         (emptyOrOccupiedByOpponent board color)
         candidates
-pieceThreats board (x, y, ChessPiece color Bishop) = {-# SCC "m_pieceThreats_Bishop" #-}
-   let rays = emptyBoardBishopRays x y
+pieceThreats board (x, y, ChessPiece color Bishop) =
+  {-# SCC "m_pieceThreats_Bishop" #-}
+  let rays = emptyBoardBishopRays x y
    in concatMap (rayToValidMoves color board) rays
-pieceThreats board (x, y, ChessPiece color Rock) = {-# SCC "m_pieceThreats_Rock" #-}
-   let rays = emptyBoardRockRays x y
+pieceThreats board (x, y, ChessPiece color Rock) =
+  {-# SCC "m_pieceThreats_Rock" #-}
+  let rays = emptyBoardRockRays x y
    in concatMap (rayToValidMoves color board) rays
-pieceThreats board (x, y, ChessPiece color Horse) = {-# SCC "m_pieceThreats_Horse" #-} 
-   let candidates =
+pieceThreats board (x, y, ChessPiece color Horse) =
+  {-# SCC "m_pieceThreats_Horse" #-}
+  let candidates =
         [ (x + 1, y + 2),
           (x + 1, y - 2),
           (x - 1, y + 2),
@@ -546,7 +551,7 @@ pieceThreats board (x, y, ChessPiece color Horse) = {-# SCC "m_pieceThreats_Hors
           (x - 2, y + 1),
           (x - 2, y - 1)
         ]
-   in  filter
+   in filter
         (emptyOrOccupiedByOpponent board color)
         candidates
 
@@ -554,10 +559,10 @@ rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
 rayToValidMoves color board squares = filterUntilHit squares
   where
     filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
-    filterUntilHit ((x, y) : rest) 
-        | isPlayerOnSquare board color x y = []
-        | isPlayerOnSquare board (otherPlayer color) x y = [(x, y)]
-        | otherwise = (x, y) : filterUntilHit rest
+    filterUntilHit ((x, y) : rest)
+      | isPlayerOnSquare board color x y = []
+      | isPlayerOnSquare board (otherPlayer color) x y = [(x, y)]
+      | otherwise = (x, y) : filterUntilHit rest
     filterUntilHit [] = []
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
@@ -570,23 +575,28 @@ squareUnderThreat board player x y =
   where
     opponentColor = if player == White then Black else White
     threatenedByHorse =
-        any (\(x', y') -> inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
-            [ (x + 1, y + 2),
-              (x + 1, y - 2),
-              (x - 1, y + 2),
-              (x - 1, y - 2),
-              (x + 2, y + 1),
-              (x + 2, y - 1),
-              (x - 2, y + 1),
-              (x - 2, y - 1) ]
+      any
+        (\(x', y') -> inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
+        [ (x + 1, y + 2),
+          (x + 1, y - 2),
+          (x - 1, y + 2),
+          (x - 1, y - 2),
+          (x + 2, y + 1),
+          (x + 2, y - 1),
+          (x - 2, y + 1),
+          (x - 2, y - 1)
+        ]
 
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
       let fold ((x', y') : rest) =
-            (inBounds x' y' && (case pieceOnSquare board x' y' of
-                Just (ChessPiece color' pieceType') ->
-                  color' == opponentColor && elem pieceType' threateningTypes
-                Nothing -> fold rest))
+            ( inBounds x' y'
+                && ( case pieceOnSquare board x' y' of
+                       Just (ChessPiece color' pieceType') ->
+                         color' == opponentColor && elem pieceType' threateningTypes
+                       Nothing -> fold rest
+                   )
+            )
           fold [] = False
        in fold ray
 
@@ -604,25 +614,27 @@ squareUnderThreat board player x y =
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
-  any (\ray -> checkRayPin ray False [Queen, Bishop]) (emptyBoardBishopRays x y) ||
-  any (\ray -> checkRayPin ray False [Queen, Rock]) (emptyBoardRockRays x y)
+  any (\ray -> checkRayPin ray False [Queen, Bishop]) (emptyBoardBishopRays x y)
+    || any (\ray -> checkRayPin ray False [Queen, Rock]) (emptyBoardRockRays x y)
   where
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition board player
 
     checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
     checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
-        let ownPiece = isPlayerOnSquare board player x y
-            opponentPiece = isPlayerOnSquare board opponentColor x y
-        in if not ownPiece && not opponentPiece
-           then checkRayPin rest ownPieceSeen pinnerTypes
-           else if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
-                                                        Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
-                                                        _ -> False
-           then True
-           else if not ownPieceSeen && ownPiece
-           then checkRayPin rest True pinnerTypes
-           else False
+      let ownPiece = isPlayerOnSquare board player x y
+          opponentPiece = isPlayerOnSquare board opponentColor x y
+       in if not ownPiece && not opponentPiece
+            then checkRayPin rest ownPieceSeen pinnerTypes
+            else
+              if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
+                Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
+                _ -> False
+                then True
+                else
+                  if not ownPieceSeen && ownPiece
+                    then checkRayPin rest True pinnerTypes
+                    else False
     checkRayPin [] _ _ = False
 
 {-# INLINE playerInCheck #-}
@@ -713,17 +725,19 @@ kingCandidateMoves board x y player =
 pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
 pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color
-pieceCandidateMoves board piece@(x, y, _) = map
-        (\(x', y') -> createMove x y x' y' NoPromo)
-        (pieceThreats board piece)
+pieceCandidateMoves board piece@(x, y, _) =
+  map
+    (\(x', y') -> createMove x y x' y' NoPromo)
+    (pieceThreats board piece)
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
 -- ie., pseudo legal
 pseudoLegalCandidateMoves :: ChessBoard -> [Move]
-pseudoLegalCandidateMoves board = {-# SCC "m_pseudoLegalCandidateMoves" #-}
+pseudoLegalCandidateMoves board =
+  {-# SCC "m_pseudoLegalCandidateMoves" #-}
   let player = turn board
       playerPieces = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
-  in concatMap (\p -> pieceCandidateMoves board p) playerPieces
+   in concatMap (\p -> pieceCandidateMoves board p) playerPieces
 
 -- returns just if given candidate is legal, empty otherwise
 -- (candidate can be illegal because pseudoLegalCandidateMoves returns pseudolegal moves)
@@ -731,25 +745,24 @@ candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
       inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin) || isKingMove || isEnPassant) && playerInCheck' board' player
-  in if not inCheck
-     then return board'
-     else Nothing
+   in if not inCheck
+        then return board'
+        else Nothing
   where
     player = turn board
     wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition board player
     movePotentiallyBreakingPin =
-        fromRow candidate == king_y
-            || fromCol candidate == king_x
-            || abs (fromRow candidate - king_y) == abs (fromCol candidate - king_x)
+      fromRow candidate == king_y
+        || fromCol candidate == king_x
+        || abs (fromRow candidate - king_y) == abs (fromCol candidate - king_x)
     isKingMove =
-        fromRow candidate == king_y && fromCol candidate == king_x
+      fromRow candidate == king_y && fromCol candidate == king_x
     -- en pessent move might clear a pin held by opponent's pawn
     isEnPassant = case pieceOnSquare board (fromCol candidate) (fromRow candidate) of
-        Just (ChessPiece _ Pawn) -> (fromCol candidate) /= (toCol candidate)
-        _ -> False
-        
+      Just (ChessPiece _ Pawn) -> (fromCol candidate) /= (toCol candidate)
+      _ -> False
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
@@ -762,19 +775,20 @@ applyMove board move = do
 {-# INLINE getCaptureInfo #-}
 getCaptureInfo :: ChessBoard -> Move -> Maybe (ChessPieceType, ChessPieceType)
 getCaptureInfo board move =
-    case pieceOnSquare board (fromCol move) (fromRow move) of
-        Just (ChessPiece _ Pawn) ->
-            case pieceOnSquare board (toCol move) (toRow move) of
-                Just (ChessPiece _ attackedPieceType) -> Just (Pawn, attackedPieceType)
-                -- if columns don't match but there was nothing on the target square, then this must have been en passant capture
-                _ -> if (fromCol move /= toCol move && (enPassant board) == Just (toCol move))
-                     then Just (Pawn, Pawn)
-                     else Nothing
-        Just (ChessPiece _ attackingPieceType) ->
-            case pieceOnSquare board (toCol move) (toRow move) of
-                Just (ChessPiece _ attackedPieceType) -> Just (attackingPieceType, attackedPieceType)
-                _ -> Nothing
-        Nothing -> Nothing
+  case pieceOnSquare board (fromCol move) (fromRow move) of
+    Just (ChessPiece _ Pawn) ->
+      case pieceOnSquare board (toCol move) (toRow move) of
+        Just (ChessPiece _ attackedPieceType) -> Just (Pawn, attackedPieceType)
+        -- if columns don't match but there was nothing on the target square, then this must have been en passant capture
+        _ ->
+          if (fromCol move /= toCol move && (enPassant board) == Just (toCol move))
+            then Just (Pawn, Pawn)
+            else Nothing
+    Just (ChessPiece _ attackingPieceType) ->
+      case pieceOnSquare board (toCol move) (toRow move) of
+        Just (ChessPiece _ attackedPieceType) -> Just (attackingPieceType, attackedPieceType)
+        _ -> Nothing
+    Nothing -> Nothing
 
 -- returns parsed pieces + rest of input
 loadFenPieces :: String -> (Int, Int) -> ChessBoardPositions -> Maybe (ChessBoardPositions, String)
@@ -834,15 +848,15 @@ loadEnPassant _ = Nothing
 
 loadFullMoves :: String -> Maybe (Int, String)
 loadFullMoves input = do
-    let (fullMoveStr, input') = readNumber "" input
-    fullMove <- readMaybe fullMoveStr
-    return (fullMove, input')
-    where
-        readNumber result [] = (result, [])
-        readNumber result (x:xs) =
-            if isDigit x
-            then readNumber (result ++ [x]) xs
-            else (result, x:xs)
+  let (fullMoveStr, input') = readNumber "" input
+  fullMove <- readMaybe fullMoveStr
+  return (fullMove, input')
+  where
+    readNumber result [] = (result, [])
+    readNumber result (x : xs) =
+      if isDigit x
+        then readNumber (result ++ [x]) xs
+        else (result, x : xs)
 
 skipUntilWhitespace :: String -> String
 skipUntilWhitespace (' ' : rest) = rest
@@ -886,14 +900,13 @@ loadFen input = do
 
 boardToFen :: ChessBoard -> String
 boardToFen board =
-    rankToStr 8 ++
-    (concatMap (\i -> "/" ++ rankToStr (8 - i)) [1..7]) ++ 
-    " " ++
-    (if (turn board) == White then "w" else "b") ++ 
-    " " ++
-    castling ++
-    " - 1 1" -- TODO fix missing en pessant
-
+  rankToStr 8
+    ++ (concatMap (\i -> "/" ++ rankToStr (8 - i)) [1 .. 7])
+    ++ " "
+    ++ (if (turn board) == White then "w" else "b")
+    ++ " "
+    ++ castling
+    ++ " - 1 1" -- TODO fix missing en pessant
   where
     pieceToStr (Just (ChessPiece Black Pawn)) = "p"
     pieceToStr (Just (ChessPiece Black Horse)) = "n"
@@ -909,12 +922,12 @@ boardToFen board =
     pieceToStr (Just (ChessPiece White King)) = "K"
     pieceToStr Nothing = "1"
 
-    rankToStr rank = concatMap (\file -> pieceToStr $ pieceOnSquare board file rank) [1..8]
+    rankToStr rank = concatMap (\file -> pieceToStr $ pieceOnSquare board file rank) [1 .. 8]
 
-    castling = 
-        let str =
-                (if (whiteKingCastle board) then "K" else "") ++
-                (if (whiteQueenCastle board) then "Q" else "") ++
-                (if (blackKingCastle board) then "k" else "") ++
-                (if (blackQueenCastle board) then "q" else "")
-        in if (length str) == 0 then "-" else str
+    castling =
+      let str =
+            (if (whiteKingCastle board) then "K" else "")
+              ++ (if (whiteQueenCastle board) then "Q" else "")
+              ++ (if (blackKingCastle board) then "k" else "")
+              ++ (if (blackQueenCastle board) then "q" else "")
+       in if (length str) == 0 then "-" else str

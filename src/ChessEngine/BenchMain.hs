@@ -1,17 +1,18 @@
 {-# LANGUAGE NamedFieldPuns #-}
+
 module Main where
 
 import ChessEngine.Board
 import ChessEngine.PositionEval
-import Control.Monad (forM_)
 import Control.Applicative ((<|>))
-import Data.Maybe (fromJust)
+import Control.Monad (forM_)
 import Data.IORef
+import Data.Maybe (fromJust)
 
 -- https://www.chessprogramming.org/Bratko-Kopec_Test
 positions :: [(String, String)]
-positions = [
-    ("1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - ", "Qd1+"),
+positions =
+  [ ("1k1r4/pp1b1R2/3q2pp/4p3/2B5/4Q3/PPP2B2/2K5 b - - ", "Qd1+"),
     ("3r1k2/4npp1/1ppr3p/p6P/P2PPPP1/1NR5/5K2/2R5 w - - ", "d5"),
     ("2q1rr1k/3bbnnp/p2p1pp1/2pPp3/PpP1P1P1/1P2BNNP/2BQ1PRK/7R b - - ", "f5"),
     ("rnbqkb1r/p3pppp/1p6/2ppP3/3N4/2P5/PPP1QPPP/R1B1KB1R w KQkq - ", "e6"),
@@ -34,16 +35,17 @@ positions = [
     ("3rn2k/ppb2rpp/2ppqp2/5N2/2P1P3/1P5Q/PB3PPP/3RR1K1 w - - ", "Nh6"),
     ("2r2rk1/1bqnbpp1/1p1ppn1p/pP6/N1P1P3/P2B1N1P/1B2QPP1/R2R2K1 b - - ", "Bxe4"),
     ("r1bqk2r/pp2bppp/2p5/3pP3/P2Q1P2/2N1B3/1PP3PP/R4RK1 b kq - ", "f6"),
-    ("r2qnrnk/p2b2b1/1p1p2pp/2pPpp2/1PP1P3/PRNBB3/3QNPPP/5RK1 w - - ", "f4")]
+    ("r2qnrnk/p2b2b1/1p1p2pp/2pPpp2/1PP1P3/PRNBB3/3QNPPP/5RK1 w - - ", "f4")
+  ]
 
 computePosition :: String -> String -> IO String
 computePosition fen expectedBestMove = do
-    let (board, _) = fromJust $ loadFen fen
-    evalResultRef <- newIORef EvaluateResult { nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False }
-    EvaluateResult { nodesParsed, moves = (move:rest) } <- evaluate evalResultRef board 4
-    return $ "Expected best move: " ++ expectedBestMove ++ ", found move: " ++ (show move) ++ ". Nodes: " ++ (show nodesParsed)
+  let (board, _) = fromJust $ loadFen fen
+  evalResultRef <- newIORef EvaluateResult {nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False}
+  EvaluateResult {nodesParsed, moves = (move : rest)} <- evaluate evalResultRef board 4
+  return $ "Expected best move: " ++ expectedBestMove ++ ", found move: " ++ (show move) ++ ". Nodes: " ++ (show nodesParsed)
 
 main :: IO ()
 main = do
-    results <- mapM (\(fen, bm) -> computePosition fen bm) positions
-    forM_ results print
+  results <- mapM (\(fen, bm) -> computePosition fen bm) positions
+  forM_ results print

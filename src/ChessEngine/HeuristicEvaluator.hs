@@ -1,8 +1,6 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
-module ChessEngine.HeuristicEvaluator
-( finalDepthEval, finalDepthEvalExplained )
-where
+module ChessEngine.HeuristicEvaluator (finalDepthEval, finalDepthEvalExplained) where
 
 import ChessEngine.Board
 import ChessEngine.EvaluatorData
@@ -72,16 +70,16 @@ evaluatePawns cache board = do
 
 finalDepthEval :: ChessCache -> ChessBoard -> IO PositionEval
 finalDepthEval cache board = do
-    (eval, _) <- finalDepthEval' (const ()) cache board
-    return eval
+  (eval, _) <- finalDepthEval' (const ()) cache board
+  return eval
 
 finalDepthEvalExplained :: ChessBoard -> IO (PositionEval, [String])
 finalDepthEvalExplained board = do
-    cache <- create
-    finalDepthEval' return cache board
+  cache <- create
+  finalDepthEval' return cache board
 
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
-finalDepthEval' :: Monoid m => (String -> m) -> ChessCache -> ChessBoard -> IO (PositionEval, m)
+finalDepthEval' :: (Monoid m) => (String -> m) -> ChessCache -> ChessBoard -> IO (PositionEval, m)
 finalDepthEval' infoConsumer cache board = do
   let nonPawnScoreRaw = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
   let nonPawnScore = explain infoConsumer nonPawnScoreRaw "Non pawns"
@@ -96,17 +94,17 @@ finalDepthEval' infoConsumer cache board = do
   where
     pieceMul color = if color == turn board then 1 else -1
 
-    addScore :: Monoid m => (Int, m) -> (Int, m) -> (Int, m)
+    addScore :: (Monoid m) => (Int, m) -> (Int, m) -> (Int, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
 
-    addScores :: Monoid m => [(Int, m)] -> (Int, m)
+    addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
     addScores [a, b] = addScore a b
     addScores (x : rest) = addScore x (addScores rest)
 
-    explain :: Monoid m => (String -> m) -> Int -> String -> (Int, m)
+    explain :: (Monoid m) => (String -> m) -> Int -> String -> (Int, m)
     explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))
 
-    explain' :: Monoid m => (String -> m) -> (Int, m) -> String -> (Int, m)
+    explain' :: (Monoid m) => (String -> m) -> (Int, m) -> String -> (Int, m)
     explain' infoConsumer (score, explanation) text = (score, explanation <> infoConsumer (text ++ ": " ++ (show score)))
 
     scorePiece :: (Int, Int, ChessPiece) -> Int
@@ -155,45 +153,48 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
 scoreKingSafety :: ChessBoard -> PlayerColor -> Int
-scoreKingSafety board player = 
-    floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier
-    where
-        (king_x, king_y) = playerKingPosition board player
+scoreKingSafety board player =
+  floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier
+  where
+    (king_x, king_y) = playerKingPosition board player
 
-        -- expect 3 pawns in front of king 2x3 rectangle; penalize by -1 for each missing pawn
-        scorePawnShield :: Int
-        scorePawnShield = 
-            let 
-              x1 = case king_x of
-                      1 -> 1
-                      8 -> 6
-                      n -> n - 1
-              x2 = x1 + 2
-              y1 = case player of
-                      White -> king_y + 1
-                      Black -> king_y - 2
-              y2 = y1 + 1
-              pawnShield = countPawnsInArea x1 y1 x2 y2
-            in ((min 3 pawnShield) - 3) * 100
+    -- expect 3 pawns in front of king 2x3 rectangle; penalize by -1 for each missing pawn
+    scorePawnShield :: Int
+    scorePawnShield =
+      let x1 = case king_x of
+            1 -> 1
+            8 -> 6
+            n -> n - 1
+          x2 = x1 + 2
+          y1 = case player of
+            White -> king_y + 1
+            Black -> king_y - 2
+          y2 = y1 + 1
+          pawnShield = countPawnsInArea x1 y1 x2 y2
+       in ((min 3 pawnShield) - 3) * 100
 
-        countPawnsInArea x1 y1 x2 y2 =
-            let squares = do
-                            x' <- [(max x1 1) .. (min x2 8)]
-                            y' <- [(max y1 1) .. (min y2 8)]
-                            return (x', y')
-            in foldl' (\count (x, y) -> if hasPieceOnSquare board x y (ChessPiece player Pawn) 
-                                        then count + 1 
-                                        else count) 
-                      0 squares
+    countPawnsInArea x1 y1 x2 y2 =
+      let squares = do
+            x' <- [(max x1 1) .. (min x2 8)]
+            y' <- [(max y1 1) .. (min y2 8)]
+            return (x', y')
+       in foldl'
+            ( \count (x, y) ->
+                if hasPieceOnSquare board x y (ChessPiece player Pawn)
+                  then count + 1
+                  else count
+            )
+            0
+            squares
 
-        --TODO
-        --scoreOpenFile
+    -- TODO
+    -- scoreOpenFile
 
-        safetyMultiplier :: Float
-        safetyMultiplier =
-            let opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player)
-                lowBound = 5.0
-                highBound = 30.0
-                range = highBound - lowBound
-                adjustedMaterial = min highBound (max lowBound opponentMaterial)
-            in (adjustedMaterial - lowBound) / range
+    safetyMultiplier :: Float
+    safetyMultiplier =
+      let opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player)
+          lowBound = 5.0
+          highBound = 30.0
+          range = highBound - lowBound
+          adjustedMaterial = min highBound (max lowBound opponentMaterial)
+       in (adjustedMaterial - lowBound) / range
