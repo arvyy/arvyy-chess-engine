@@ -1,23 +1,25 @@
 = Arvy chess engine
 
-Homegrown chess engine in haskell with terrible performance. Engine can only go 5-6 ply deep before taking unacceptable amount of time for a move, which seems very low given the employed heurstics, and I wasn't able debug why. 5-ply deep search scored around 1600 elo on lichess.
+Homegrown chess engine in haskell with terrible performance.
+Around 1750-1800 ELO on lichess: https://lichess.org/@/arvyy_bot .
+Operates through UCI.
 
-Operates through UCI. Features:
+.Features
+. Alpha / beta pruning;
+. Iterative deepening;
+. PVS / null-window pruning;
+. Null move pruning;
+. Bitboards;
+. Piece-square tables valuation;
+. Mobility valuation;
+. Pawn structure valuation;
+. King safety valuation;
+. Quiescence search with Delta pruning;
+. Killer moves;
 
-1. Alpha / beta pruning;
-2. Null move pruning;
-3. Null-window pruning;
-4. Late move removal pruning;
-5. Iterative deepening;
-6. PVS mainline caching;
-7. Bitboards;
-8. Piece-square tables valuation;
-9. Mobility valuation;
-10. Pawn structure valuation;
-11. Quiescence search (including Delta pruning);
-12. Killer moves;
+== Running
 
-== Building and running
+=== Building and running UCI
 
 [source]
 ----
@@ -25,17 +27,54 @@ cabal build
 $(cabal exec which chessengine_uci)
 ----
 
-== Testing
+`cabal exec which chessengine_uci` returns path to compiled engine executable -- copy file lying there to lichess bot engines folder to deploy.
+Can do it through `make deploy` (must have `.env` file with correspondingly `DEPLOYMENT_DIR` entry point at this location).
+
+=== Testing
 
 [source]
 ----
 cabal test
 ----
 
-== Benchmarking
+Runs unit tests.
 
 [source]
 ----
-cabal build
-$(cabal exec which chessengine_benchmark)
+cabal exec chessengine_bench
 ----
+
+Run bench (not to be confused with benchmark). Bench measures node count, useful to test changes didn't affect search tree span.
+
+=== Benchmarking
+
+[source]
+----
+cabal bench
+----
+
+=== Running SPRT (self play)
+
+First, install fast chess. Next, checkout same engine but different version in some other directory (git worktree recommended), eg., `../chessengine_foo`. Setup `.env` file:
+
+[bash]
+----
+ENGINE1_DIR=./
+ENGINE2_DIR=../chessengine_main
+FAST_CHESS_EXE=<path to fast chess>
+----
+
+Finally, run `make sprt-quick` or `make sprt`.
+
+=== Profiling
+
+First populate file `profile_input.txt` with UCI commands, one per line. Don't include `quit`. Then run `make profile`. Results will be seen in `chessengine_uci.prof` file.
+
+== Implementation notes
+
+It seems List is king. Although one would think Sequence or something could be better for candidate move generation (to avoid `++`), ultimately it seems to lose ELO.
+
+Cache is cleared between `go` commands. In theory preserving and reusing PV nodes between the moves should improve performance, attempts at implementing it had been unsuccessful. 
+It must be due to some bug.
+
+The performance suffers when using O2, stick with O1.

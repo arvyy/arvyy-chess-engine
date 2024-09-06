@@ -883,7 +883,9 @@ loadFen input = do
   ((wk, wq, bk, bq), input) <- loadCastlingRights input (False, False, False, False)
   (enPassant, input) <- loadEnPassant input
   let input' = skipUntilWhitespace input
-  (fullMoves, input'') <- loadFullMoves input'
+  let (fullMoves, input'') = case loadFullMoves input' of
+        Just r -> r
+        _ -> (0, input')
   let board =
         ChessBoard
           { turn = turn,

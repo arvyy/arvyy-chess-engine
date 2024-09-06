@@ -4,7 +4,7 @@ ifneq (,$(wildcard ./.env))
     export
 endif
 
-.PHONY: sprt, profile, help
+.PHONY: sprt, sprt-quick, profile, help, run-file, deploy
 
 help:
 	@echo 'Run `make sprt` to run sprt match. Must have ENGINE1_DIR, ENGINE2_DIR, FAST_CHESS_EXE env variables defined in .env file'
@@ -30,7 +30,7 @@ run-file:
 
 profile:
 	cabal build --enable-profiling --enable-library-profiling
-	cat profile_input.txt | $$(cabal exec which chessengine_uci) +RTS -p
+	bash -c "( cat profile_input.txt ; sleep 10 ; echo 'quit' ) | $$(cabal exec which chessengine_uci) +RTS -p"
 
 deploy:
 	cabal build
