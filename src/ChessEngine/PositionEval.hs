@@ -148,8 +148,8 @@ partitionAndSortCaptureMoves board moves =
             return $ captureScore capturedType - captureScore capturingType
        in (move, diff)
 
-horizonEval :: ChessCache -> Int -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
-horizonEval cache depth board alpha beta =
+horizonEval :: ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
+horizonEval cache board alpha beta =
   {-# SCC "m_horizonEval" #-}
   if playerInCheck board
     then
@@ -157,7 +157,7 @@ horizonEval cache depth board alpha beta =
       let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
        in if (null moves)
             then return $ outOfMovesEval board
-            else foldHorizonEval cache depth board moves alpha beta
+            else foldHorizonEval cache board moves alpha beta
     else
       {-# SCC "m_horizonEval_not_incheck" #-}
       do
@@ -166,7 +166,7 @@ horizonEval cache depth board alpha beta =
         let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
         if pat >= beta
           then return pat
-          else foldHorizonEval cache depth board capturingMoves alpha' beta
+          else foldHorizonEval cache board capturingMoves alpha' beta
   where
     -- examine only captures when not in check
     -- apply "delta pruning", only consider captures
@@ -186,14 +186,14 @@ horizonEval cache depth board alpha beta =
       let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
 
-foldHorizonEval :: ChessCache -> Int -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
-foldHorizonEval cache depth board (move : rest) alpha beta = do
-  value <- negateEval <$> horizonEval cache (depth - 1) (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
+foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
+foldHorizonEval cache board (move : rest) alpha beta = do
+  value <- negateEval <$> horizonEval cache (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
   let alpha' = max alpha value
   if value >= beta
     then return value
-    else foldHorizonEval cache depth board rest alpha' beta
-foldHorizonEval _ _ _ [] alpha _ = return alpha
+    else foldHorizonEval cache board rest alpha' beta
+foldHorizonEval _ _ [] alpha _ = return alpha
 
 evaluate'' :: ChessCache -> EvaluateParams -> [(Move, ChessBoard)] -> App (BestMove, Int, TableValueBound)
 evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove, showUCIInfo} candidates
@@ -201,7 +201,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
       let eval = outOfMovesEval board
        in return ((eval, []), nodesParsed, Exact)
   | depth <= 0 = do
-      eval <- liftIO $ horizonEval cache 10 board alpha beta
+      eval <- liftIO $ horizonEval cache board alpha beta
       let bound =
             if eval <= alpha
               then UpperBound
@@ -251,7 +251,6 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
     foldCandidates =
       foldCandidates' CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), candidates = candidates, alpha = alpha, beta = beta, siblingIndex = 0, lmrTried = False, nullWindowTried = False, nodesParsed = nodesParsed}
 
-    -- TODO struct for passing arguments around?
     foldCandidates' :: CandidatesFold -> App (BestMove, Int, TableValueBound)
     foldCandidates' candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), candidates = ((candidateMove, candidateBoard) : restCandidates), alpha, beta, siblingIndex, lmrTried, nullWindowTried, nodesParsed}
       | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
