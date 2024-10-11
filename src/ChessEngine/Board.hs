@@ -666,7 +666,7 @@ pawnCandidateMoves board x y player =
           _ -> []
         if promotesOnMove
           then do
-            createMove x y x' y' <$> [PromoHorse, PromoRock, PromoQueen, PromoBishop, PromoHorse]
+            createMove x y x' y' <$> [PromoQueen, PromoRock, PromoBishop, PromoHorse]
           else return $ createMove x y x' y' NoPromo
       enPassantCaptures = do
         x' <- [x - 1, x + 1]
@@ -685,7 +685,7 @@ pawnCandidateMoves board x y player =
          in ([createMove x y x (y + 2 * dir) NoPromo | canDoubleDip])
       singleMove
         | aheadIsClear && not promotesOnMove = [createMove x y x (y + dir) NoPromo]
-        | aheadIsClear && promotesOnMove = map (\promotion -> createMove x y x (y + dir) promotion) [PromoHorse, PromoRock, PromoQueen, PromoBishop]
+        | aheadIsClear && promotesOnMove = map (\promotion -> createMove x y x (y + dir) promotion) [PromoQueen, PromoRock, PromoHorse, PromoBishop]
         | otherwise = []
    in normalCaptures ++ enPassantCaptures ++ doubleDipMove ++ singleMove
 
