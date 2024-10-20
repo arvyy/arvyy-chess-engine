@@ -9,6 +9,7 @@ extra-source-files:  CHANGELOG.md
 
 common deps
   build-depends:
+     async >=2.2.5,
      base >=4.14,
      array,
      containers >=0.6,
@@ -18,6 +19,7 @@ common deps
      transformers >=0.6,
      time >=1.9,
      stm >=2.5,
+     stm-containers >=1.2.1,
      regex-pcre-builtin >=0.95
 
 
@@ -25,7 +27,7 @@ library chess-internal
   import: deps
   default-language: Haskell2010
   hs-source-dirs: src
-  ghc-options: -Wall
+  ghc-options: -Wall -threaded
   exposed-modules: 
     ChessEngine.ReplUtil,
     ChessEngine.Heatmaps, 
@@ -41,7 +43,7 @@ executable chessengine_uci
   import: deps
   main-is: src/ChessEngine/UCIMain.hs
   default-language: Haskell2010
-  ghc-options: -Wall -threaded -fno-omit-yields
+  ghc-options: -Wall -threaded -with-rtsopts=-N -fno-omit-yields
   build-depends:
     chess-internal
 

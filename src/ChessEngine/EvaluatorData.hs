@@ -20,11 +20,12 @@ where
 
 import ChessEngine.Board
 import Control.Monad
-import qualified Data.HashTable.IO as Map
+-- import qualified Data.HashTable.IO as Map
+import qualified StmContainers.Map as Map
 import Data.Hashable
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
-import Debug.Trace (trace)
+import Control.Concurrent.STM (atomically)
 
 newtype PositionEval = PositionEval Int
   deriving (Eq, Show, Ord)
@@ -55,52 +56,52 @@ data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
 data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [Move] deriving (Show)
 
-type TranspositionTable = Map.CuckooHashTable ChessBoardKey TranspositionValue
+type TranspositionTable = Map.Map ChessBoardKey TranspositionValue
 
-type PawnTable = Map.CuckooHashTable Int64 Int
+type PawnTable = Map.Map Int64 Int
 
-type KillerMoveTable = Map.CuckooHashTable Int [Move]
+type KillerMoveTable = Map.Map Int [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
 putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> IO ()
-putValue (ChessCache table _ _) board depth value bound move = do
+putValue (ChessCache table _ _) board depth value bound move = atomically $ do
   let key = ChessBoardKey board
-  existingValue <- Map.lookup table key
+  existingValue <- Map.lookup key table
   case existingValue of
     Just (TranspositionValue prevBound prevValue prevDepth _) -> do
-      when (depth == prevDepth) $ Map.insert table key (TranspositionValue bound value depth move)
-      when (depth > prevDepth) $ Map.insert table key (TranspositionValue bound value depth move)
-    Nothing -> Map.insert table key (TranspositionValue bound value depth move)
+      when (depth == prevDepth) $ Map.insert (TranspositionValue bound value depth move) key table 
+      when (depth > prevDepth) $ Map.insert (TranspositionValue bound value depth move) key table
+    Nothing -> Map.insert (TranspositionValue bound value depth move) key table
 
 getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
-getValue (ChessCache table _ _) board = Map.lookup table (ChessBoardKey board)
+getValue (ChessCache table _ _) board = atomically $ Map.lookup (ChessBoardKey board) table
 
 putPawnEvaluation :: ChessCache -> Int64 -> Int -> IO ()
-putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = Map.insert pawns' pawnPosition value
+putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = atomically $ Map.insert value pawnPosition pawns'
 
 getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Int)
-getPawnEvaluation (ChessCache _ pawns' _) position = Map.lookup pawns' position
+getPawnEvaluation (ChessCache _ pawns' _) position = atomically $ Map.lookup position pawns'
 
 putKillerMove :: ChessCache -> Int -> Move -> IO ()
-putKillerMove (ChessCache _ _ killerMoves) ply move =
+putKillerMove (ChessCache _ _ killerMoves) ply move = atomically $
   do
-    existing' <- Map.lookup killerMoves ply
+    existing' <- Map.lookup ply killerMoves 
     let new = case existing' of
           Just lst -> take 2 (move : lst)
           Nothing -> [move]
-    Map.insert killerMoves ply new
+    Map.insert new ply  killerMoves 
 
 getKillerMoves :: ChessCache -> Int -> IO [Move]
-getKillerMoves (ChessCache _ _ killerMoves) ply =
+getKillerMoves (ChessCache _ _ killerMoves) ply = atomically $
   do
-    existing' <- Map.lookup killerMoves ply
+    existing' <- Map.lookup ply killerMoves 
     let existing = fromMaybe [] existing'
     return existing
 
 create :: IO ChessCache
 create = do
-  table <- Map.new
-  pawns' <- Map.new
-  killerMoves <- Map.new
+  table <- Map.newIO
+  pawns' <- Map.newIO
+  killerMoves <- Map.newIO
   return (ChessCache table pawns' killerMoves)

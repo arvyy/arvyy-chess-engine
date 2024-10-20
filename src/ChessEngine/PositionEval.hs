@@ -19,6 +19,9 @@ import Control.Monad.Trans.Reader
 import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.Maybe (isJust, mapMaybe)
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import Control.Concurrent.Async (race)
+import ChessEngine.UCI (GoProps(searchMoves))
 
 type BestMove = (PositionEval, [Move])
 
@@ -40,7 +43,8 @@ data EvaluateParams = EvaluateParams
     nodesParsed :: !Int,
     currentBest :: !(PositionEval, [Move]),
     allowNullMove :: !Bool,
-    showUCIInfo :: !Bool
+    showUCIInfo :: !Bool,
+    rootBoostCandidateIndex :: !Int
   }
 
 -- TODO rename to Context
@@ -69,7 +73,7 @@ data CandidatesFold = CandidatesFold
 type App = ReaderT (IORef EvaluateResult) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
-evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha, beta, ply} =
+evaluate' cache params@EvaluateParams {board, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
   if is3foldRepetition board
     then return ((PositionEval 0, []), 0)
     else do
@@ -78,7 +82,11 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
       let doSearch = do
             sortedCandidates <- liftIO $ sortCandidates cache board ply (pseudoLegalCandidateMoves board)
             let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
-            ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards
+            let sortedCandidatesWithBoards' = 
+                    if depth == maxDepth
+                    then boostAtIndex sortedCandidatesWithBoards rootBoostCandidateIndex
+                    else sortedCandidatesWithBoards
+            ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards'
             when (bound == LowerBound) $
               liftIO $
                 case moves' of
@@ -99,6 +107,13 @@ evaluate' cache params@EvaluateParams {board, depth = depth', nodesParsed, alpha
                 then return ((eval, bestMoveLine), nodesParsed)
                 else doSearch
         Nothing -> doSearch
+  where
+    boostAtIndex :: [a] -> Int -> [a]
+    boostAtIndex lst index =
+        let (start, end) = splitAt index lst
+        in case end of
+            [] -> lst
+            (x : xs) -> concat [[x], start, xs]
 
 sortCandidates :: ChessCache -> ChessBoard -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply candidates =
@@ -312,11 +327,13 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             if (siblingIndex == 0 || eval > bestEval)
               then do
                 when (depth == maxDepth) $ do
-                  env <- ask
-                  result <- liftIO $ readIORef env
                   let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moveLine
-                  let newResult = result {nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
-                  liftIO $ writeIORef env newResult
+                  -- TODO return best position update in a middle of depth search
+                  -- currently broken due to multithreading overwriting each other and picking weak moves
+                  -- env <- ask
+                  -- result <- liftIO $ readIORef env
+                  -- let newResult = result {nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
+                  -- liftIO $ writeIORef env newResult
                   when showUCIInfo $
                     liftIO $
                       forM_ lastEvalInfo putStrLn
@@ -337,8 +354,8 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1
 
-evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Int -> Bool -> App (BestMove, Int)
-evaluateIteration cache board lastDepthBest depth nodes showDebug =
+evaluateIterationThread :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> Int -> App (BestMove, Int)
+evaluateIterationThread cache board lastDepthBest depth showDebug rootBoostCandidateIndex =
   let params =
         EvaluateParams
           { alpha = PositionEval (-10000),
@@ -347,13 +364,44 @@ evaluateIteration cache board lastDepthBest depth nodes showDebug =
             maxDepth = depth,
             ply = 0,
             board = board,
-            nodesParsed = nodes,
+            nodesParsed = 0,
             currentBest = lastDepthBest,
             allowNullMove = True,
-            showUCIInfo = showDebug
-          }
+            showUCIInfo = showDebug,
+            rootBoostCandidateIndex = rootBoostCandidateIndex }
    in do
         evaluate' cache params
+
+evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Int -> Bool -> App (BestMove, Int)
+evaluateIteration cache board lastDepthBest depth nodes showDebug = do
+    evalResultRef <- ask
+    -- don't use extra threading for low depth
+    let workerThreadCount = if depth > 2 then [2..4] else []
+    let threadActions = makeThreadAction evalResultRef <$> 1 :| workerThreadCount
+    (bestMove@(eval, moveLine), newNodes') <- liftIO $ raceMany threadActions
+    let newNodes = nodes + newNodes' -- since thread returns only its nodes, not global
+    env <- ask
+    result <- liftIO $ readIORef env
+    let lastEvalInfo = collectEvaluationInfo (turn board) newNodes eval moveLine
+    let newResult = result {nodesParsed = newNodes, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
+    liftIO $ writeIORef env newResult
+    return (bestMove, newNodes)
+    where
+        makeThreadAction :: IORef EvaluateResult -> Int -> IO (BestMove, Int)
+        makeThreadAction evalResultRef index = runReaderT (do
+                let bonusDepth = if even index then 1 else 0
+                let boostIndex = if index >= 2 then 1 else 0
+                evaluateIterationThread cache board lastDepthBest (depth + bonusDepth) showDebug boostIndex)
+            evalResultRef
+            
+
+raceMany :: NonEmpty (IO a) -> IO a
+raceMany (a :| []) = a
+raceMany (a :| b : rest) = do
+    result <- race a (raceMany $ b :| rest)
+    return $ case result of 
+        Left l -> l
+        Right r -> r
 
 iterateM' :: (a -> App a) -> App a -> Int -> App a
 iterateM' f mx n = do
