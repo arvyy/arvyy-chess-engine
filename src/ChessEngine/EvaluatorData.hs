@@ -60,7 +60,7 @@ type TranspositionTable = Map.Map ChessBoardKey TranspositionValue
 
 type PawnTable = Map.Map Int64 Int
 
-type KillerMoveTable = Map.Map Int [Move]
+type KillerMoveTable = Map.Map (Int, Int) [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
@@ -83,19 +83,19 @@ putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = atomically $ Map.
 getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Int)
 getPawnEvaluation (ChessCache _ pawns' _) position = atomically $ Map.lookup position pawns'
 
-putKillerMove :: ChessCache -> Int -> Move -> IO ()
-putKillerMove (ChessCache _ _ killerMoves) ply move = atomically $
+putKillerMove :: ChessCache -> (Int, Int) -> Move -> IO ()
+putKillerMove (ChessCache _ _ killerMoves) plyAndThreadIndex move = atomically $
   do
-    existing' <- Map.lookup ply killerMoves 
+    existing' <- Map.lookup plyAndThreadIndex killerMoves 
     let new = case existing' of
           Just lst -> take 2 (move : lst)
           Nothing -> [move]
-    Map.insert new ply  killerMoves 
+    Map.insert new plyAndThreadIndex killerMoves 
 
-getKillerMoves :: ChessCache -> Int -> IO [Move]
-getKillerMoves (ChessCache _ _ killerMoves) ply = atomically $
+getKillerMoves :: ChessCache -> (Int, Int) -> IO [Move]
+getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex = atomically $
   do
-    existing' <- Map.lookup ply killerMoves 
+    existing' <- Map.lookup plyAndThreadIndex killerMoves 
     let existing = fromMaybe [] existing'
     return existing
 
