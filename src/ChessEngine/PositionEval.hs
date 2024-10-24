@@ -55,15 +55,15 @@ data EvaluateResult = EvaluateResult
   deriving (Show)
 
 data CandidatesFold = CandidatesFold
-  { raisedAlpha :: Bool,
-    bestMoveValue :: (PositionEval, [Move]),
-    candidates :: [(Move, ChessBoard)],
-    alpha :: PositionEval,
-    beta :: PositionEval,
-    siblingIndex :: Int,
-    lmrTried :: Bool,
-    nullWindowTried :: Bool,
-    nodesParsed :: Int
+  { raisedAlpha :: !Bool,
+    bestMoveValue :: !(PositionEval, [Move]),
+    candidates :: ![(Move, ChessBoard)],
+    alpha :: !PositionEval,
+    beta :: !PositionEval,
+    siblingIndex :: !Int,
+    lmrTried :: !Bool,
+    nullWindowTried :: !Bool,
+    nodesParsed :: !Int
   }
 
 type App = ReaderT (IORef EvaluateResult) IO
