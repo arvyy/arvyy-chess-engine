@@ -186,9 +186,6 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
 
 data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show, Eq, Ord, Enum)
 
-piecePriority :: ChessPieceType -> Int
-piecePriority = fromEnum
-
 data PlayerColor = Black | White deriving (Eq, Show, Ord, Generic)
 
 data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq)
@@ -518,11 +515,11 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 -- ignores own pin status
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
 pieceThreats board (x, y, ChessPiece color King) =
-  let candidates = filter (/= (x, y)) [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
+  let hops = emptyBoardKingHops x y
    in {-# SCC "m_pieceThreats_King" #-}
       filter
         (emptyOrOccupiedByOpponent board color)
-        candidates
+        hops
 pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} (pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop))
 pieceThreats board (x, y, ChessPiece color Pawn) =
   {-# SCC "m_pieceThreats_Pawn" #-}
@@ -541,19 +538,10 @@ pieceThreats board (x, y, ChessPiece color Rock) =
    in concatMap (rayToValidMoves color board) rays
 pieceThreats board (x, y, ChessPiece color Horse) =
   {-# SCC "m_pieceThreats_Horse" #-}
-  let candidates =
-        [ (x + 1, y + 2),
-          (x + 1, y - 2),
-          (x - 1, y + 2),
-          (x - 1, y - 2),
-          (x + 2, y + 1),
-          (x + 2, y - 1),
-          (x - 2, y + 1),
-          (x - 2, y - 1)
-        ]
+  let hops = emptyBoardHorseHops x y
    in filter
         (emptyOrOccupiedByOpponent board color)
-        candidates
+        hops
 
 rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
 rayToValidMoves color board squares = filterUntilHit squares
@@ -577,15 +565,7 @@ squareUnderThreat board player x y =
     threatenedByHorse =
       any
         (\(x', y') -> inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
-        [ (x + 1, y + 2),
-          (x + 1, y - 2),
-          (x - 1, y + 2),
-          (x - 1, y - 2),
-          (x + 2, y + 1),
-          (x + 2, y - 1),
-          (x - 2, y + 1),
-          (x - 2, y - 1)
-        ]
+        (emptyBoardHorseHops x y)
 
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
