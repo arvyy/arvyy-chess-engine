@@ -45,7 +45,7 @@ executable chessengine_uci
   import: deps
   main-is: src/ChessEngine/UCIMain.hs
   default-language: Haskell2010
-  ghc-options: -Wall -threaded -with-rtsopts=-N -feager-blackholing -fno-omit-yields
+  ghc-options: -Wall -threaded "-with-rtsopts=-N -qg" -feager-blackholing -fno-omit-yields
   build-depends:
     chess-internal
 

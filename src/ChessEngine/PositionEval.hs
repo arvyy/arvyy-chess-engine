@@ -108,13 +108,6 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
                 then return ((eval, bestMoveLine), nodesParsed)
                 else doSearch
         Nothing -> doSearch
-  where
-    boostAtIndex :: [a] -> Int -> [a]
-    boostAtIndex lst index =
-        let (start, end) = splitAt index lst
-        in case end of
-            [] -> lst
-            (x : xs) -> concat [[x], start, xs]
 
 sortCandidates :: ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply threadIndex candidates =
@@ -377,7 +370,7 @@ evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -
 evaluateIteration cache board lastDepthBest depth nodes showDebug = do
     evalResultRef <- ask
     -- don't use extra threading for low depth
-    let workerThreadCount = if depth > 2 then [2..threadCount] else []
+    let workerThreadCount = if depth > 5 then [2..threadCount] else []
     let threadActions = makeThreadAction evalResultRef <$> 1 :| workerThreadCount
     (bestMove@(eval, moveLine), newNodes') <- liftIO $ raceMany threadActions
     -- (bestMove@(eval, moveLine), newNodes') <- liftIO $ parallelWaitForFirst threadActions
