@@ -44,7 +44,7 @@ data EvaluateParams = EvaluateParams
     currentBest :: !(PositionEval, [Move]),
     allowNullMove :: !Bool,
     showUCIInfo :: !Bool,
-    rootBoostCandidateIndex :: !Int,
+    rootBoostCandidateIndex :: !([(Move, ChessBoard)] -> [(Move, ChessBoard)]), -- TODO rename field
     threadIndex :: !Int
   }
 
@@ -85,7 +85,7 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
             let sortedCandidatesWithBoards' = 
                     if depth == maxDepth
-                    then boostAtIndex sortedCandidatesWithBoards rootBoostCandidateIndex
+                    then rootBoostCandidateIndex sortedCandidatesWithBoards
                     else sortedCandidatesWithBoards
             ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards'
             when (bound == LowerBound) $
@@ -354,7 +354,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1
 
-evaluateIterationThread :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> Int -> Int -> App (BestMove, Int)
+evaluateIterationThread :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> ([(Move, ChessBoard)] -> [(Move, ChessBoard)]) -> Int -> App (BestMove, Int)
 evaluateIterationThread cache board lastDepthBest depth showDebug rootBoostCandidateIndex threadIndex =
   let params =
         EvaluateParams
@@ -377,7 +377,7 @@ evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -
 evaluateIteration cache board lastDepthBest depth nodes showDebug = do
     evalResultRef <- ask
     -- don't use extra threading for low depth
-    let workerThreadCount = if depth > 2 then [2..8] else []
+    let workerThreadCount = if depth > 2 then [2..threadCount] else []
     let threadActions = makeThreadAction evalResultRef <$> 1 :| workerThreadCount
     (bestMove@(eval, moveLine), newNodes') <- liftIO $ raceMany threadActions
     -- (bestMove@(eval, moveLine), newNodes') <- liftIO $ parallelWaitForFirst threadActions
@@ -389,12 +389,21 @@ evaluateIteration cache board lastDepthBest depth nodes showDebug = do
     liftIO $ writeIORef env newResult
     return (bestMove, newNodes)
     where
+        threadCount = 4
         makeThreadAction :: IORef EvaluateResult -> Int -> IO (BestMove, Int)
-        makeThreadAction evalResultRef index = runReaderT (do
-                let bonusDepth = 0 --if even index then 1 else 0
-                let boostIndex = (index - 1) -- (index - 1) `div` 2
-                evaluateIterationThread cache board lastDepthBest (depth + bonusDepth) showDebug boostIndex index)
+        makeThreadAction evalResultRef threadIndex = runReaderT (do
+                let scrambleCandidates :: [(Move, ChessBoard)] -> [(Move, ChessBoard)]
+                    scrambleCandidates candidates = case splitAt (threadCount * 2) candidates  of
+                                                        (xs, rest) -> if ((threadIndex - 1) * 2) < length xs
+                                                                      then (rotate ((threadIndex - 1) * 2) xs) ++ rest
+                                                                      else candidates
+                                                    
+                evaluateIterationThread cache board lastDepthBest depth showDebug scrambleCandidates threadIndex)
             evalResultRef
+
+rotate :: Int -> [a] -> [a]
+rotate 0 els = els
+rotate count els = drop count els ++ take count els
 
 raceMany :: NonEmpty (IO a) -> IO a
 raceMany (a :| []) = a
