@@ -39,7 +39,8 @@ newtype ChessBoardKey = ChessBoardKey ChessBoard
 
 instance Eq ChessBoardKey where
   (==) (ChessBoardKey b1) (ChessBoardKey b2) =
-    (pieces b1) == (pieces b2)
+    (zebraHash b1) == (zebraHash b2)
+      && (pieces b1) == (pieces b2)
       && (turn b1) == (turn b2)
       && (enPassant b1) == (enPassant b2)
       && (blackQueenCastle b1) == (blackQueenCastle b2)
@@ -48,8 +49,7 @@ instance Eq ChessBoardKey where
       && (whiteKingCastle b1) == (whiteKingCastle b2)
 
 instance Hashable ChessBoardKey where
-  hashWithSalt salt (ChessBoardKey ChessBoard {turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle}) =
-    hashWithSalt salt (turn, pieces, enPassant, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle)
+  hashWithSalt salt (ChessBoardKey ChessBoard { zebraHash }) = fromIntegral zebraHash
 
 data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
