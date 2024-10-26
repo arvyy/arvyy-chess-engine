@@ -19,16 +19,18 @@ module ChessEngine.EvaluatorData
 where
 
 import ChessEngine.Board
-import Control.Monad
--- import qualified Data.HashTable.IO as Map
 import qualified StmContainers.Map as Map
-import Data.Hashable
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
 import Control.Concurrent.STM (atomically)
+import qualified Data.Array.IO as Array
+import Data.Word
 
 newtype PositionEval = PositionEval Int
   deriving (Eq, Show, Ord)
+
+ttSize :: Word64
+ttSize = 2 ^ 18
 
 negateEval :: PositionEval -> PositionEval
 negateEval (PositionEval v) = PositionEval (-v)
@@ -36,27 +38,11 @@ negateEval (PositionEval v) = PositionEval (-v)
 evalAdd :: PositionEval -> Int -> PositionEval
 evalAdd (PositionEval v) added = (PositionEval $ v + added)
 
-newtype ChessBoardKey = ChessBoardKey ChessBoard
-
-instance Eq ChessBoardKey where
-  (==) (ChessBoardKey b1) (ChessBoardKey b2) =
-    (zebraHash b1) == (zebraHash b2)
-      && (pieces b1) == (pieces b2)
-      && (turn b1) == (turn b2)
-      && (enPassant b1) == (enPassant b2)
-      && (blackQueenCastle b1) == (blackQueenCastle b2)
-      && (blackKingCastle b1) == (blackKingCastle b2)
-      && (whiteQueenCastle b1) == (whiteQueenCastle b2)
-      && (whiteKingCastle b1) == (whiteKingCastle b2)
-
-instance Hashable ChessBoardKey where
-  hashWithSalt salt (ChessBoardKey ChessBoard { zebraHash }) = fromIntegral zebraHash
-
 data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
 
 data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [Move] deriving (Show)
 
-type TranspositionTable = Map.Map ChessBoardKey TranspositionValue
+type TranspositionTable = Array.IOArray Word64 (Bool, Word64, TranspositionValue)
 
 type PawnTable = Map.Map Int64 Int
 
@@ -65,17 +51,18 @@ type KillerMoveTable = Map.Map (Int, Int) [Move]
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
 putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> IO ()
-putValue (ChessCache table _ _) board depth value bound move = atomically $ do
-  let key = ChessBoardKey board
-  existingValue <- Map.lookup key table
-  case existingValue of
-    Just (TranspositionValue prevBound prevValue prevDepth _) -> do
-      when (depth == prevDepth) $ Map.insert (TranspositionValue bound value depth move) key table 
-      when (depth > prevDepth) $ Map.insert (TranspositionValue bound value depth move) key table
-    Nothing -> Map.insert (TranspositionValue bound value depth move) key table
+putValue (ChessCache table _ _) board depth value bound move = do
+  let key = (zebraHash board) `mod` ttSize
+  Array.writeArray table key (True, (zebraHash board), (TranspositionValue bound value depth move))
 
 getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
-getValue (ChessCache table _ _) board = atomically $ Map.lookup (ChessBoardKey board) table
+getValue (ChessCache table _ _) board = do
+    let key = (zebraHash board) `mod` ttSize
+    (present, hash, value@(TranspositionValue _ _ _ _)) <- Array.readArray table key
+    return $ 
+        if present && hash == (zebraHash board) 
+        then Just value 
+        else Nothing
 
 putPawnEvaluation :: ChessCache -> Int64 -> Int -> IO ()
 putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = atomically $ Map.insert value pawnPosition pawns'
@@ -101,7 +88,7 @@ getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex = atomically $
 
 create :: IO ChessCache
 create = do
-  table <- Map.newIO
+  table <- Array.newArray (0, ttSize) (False, 0, (TranspositionValue UpperBound (PositionEval 0) 0 [undefined]))
   pawns' <- Map.newIO
   killerMoves <- Map.newIO
   return (ChessCache table pawns' killerMoves)
