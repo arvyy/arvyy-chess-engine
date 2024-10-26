@@ -16,7 +16,8 @@ Operates through UCI.
 . King safety valuation;
 . Quiescence search with Delta pruning;
 . Killer moves;
-. Zobrist hashing.
+. Zobrist hashing;
+. Lazy SMP.
 
 == Running
 

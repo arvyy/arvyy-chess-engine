@@ -19,12 +19,10 @@ module ChessEngine.EvaluatorData
 where
 
 import ChessEngine.Board
-import Control.Monad
-import qualified Data.HashTable.IO as Map
-import Data.Hashable
+import qualified StmContainers.Map as Map
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
-import Debug.Trace (trace)
+import Control.Concurrent.STM (atomically)
 import qualified Data.Array.IO as Array
 import Data.Word
 
@@ -46,9 +44,9 @@ data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [M
 
 type TranspositionTable = Array.IOArray Word64 (Bool, Word64, TranspositionValue)
 
-type PawnTable = Map.CuckooHashTable Int64 Int
+type PawnTable = Map.Map Int64 Int
 
-type KillerMoveTable = Map.CuckooHashTable Int [Move]
+type KillerMoveTable = Map.Map (Int, Int) [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
@@ -67,30 +65,30 @@ getValue (ChessCache table _ _) board = do
         else Nothing
 
 putPawnEvaluation :: ChessCache -> Int64 -> Int -> IO ()
-putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = Map.insert pawns' pawnPosition value
+putPawnEvaluation (ChessCache _ pawns' _) pawnPosition value = atomically $ Map.insert value pawnPosition pawns'
 
 getPawnEvaluation :: ChessCache -> Int64 -> IO (Maybe Int)
-getPawnEvaluation (ChessCache _ pawns' _) position = Map.lookup pawns' position
+getPawnEvaluation (ChessCache _ pawns' _) position = atomically $ Map.lookup position pawns'
 
-putKillerMove :: ChessCache -> Int -> Move -> IO ()
-putKillerMove (ChessCache _ _ killerMoves) ply move =
+putKillerMove :: ChessCache -> (Int, Int) -> Move -> IO ()
+putKillerMove (ChessCache _ _ killerMoves) plyAndThreadIndex move = atomically $
   do
-    existing' <- Map.lookup killerMoves ply
+    existing' <- Map.lookup plyAndThreadIndex killerMoves 
     let new = case existing' of
           Just lst -> take 2 (move : lst)
           Nothing -> [move]
-    Map.insert killerMoves ply new
+    Map.insert new plyAndThreadIndex killerMoves 
 
-getKillerMoves :: ChessCache -> Int -> IO [Move]
-getKillerMoves (ChessCache _ _ killerMoves) ply =
+getKillerMoves :: ChessCache -> (Int, Int) -> IO [Move]
+getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex = atomically $
   do
-    existing' <- Map.lookup killerMoves ply
+    existing' <- Map.lookup plyAndThreadIndex killerMoves 
     let existing = fromMaybe [] existing'
     return existing
 
 create :: IO ChessCache
 create = do
   table <- Array.newArray (0, ttSize) (False, 0, (TranspositionValue UpperBound (PositionEval 0) 0 [undefined]))
-  pawns' <- Map.new
-  killerMoves <- Map.new
+  pawns' <- Map.newIO
+  killerMoves <- Map.newIO
   return (ChessCache table pawns' killerMoves)
