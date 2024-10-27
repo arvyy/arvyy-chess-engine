@@ -6,7 +6,7 @@ module ChessEngine.PositionEval
   ( PositionEval (..),
     evaluate,
     collectEvaluationInfo,
-    EvaluateResult (..),
+    EvaluationContext (..),
   )
 where
 
@@ -20,8 +20,7 @@ import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.Maybe (isJust, mapMaybe)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Control.Concurrent.Async (race, withAsync, wait, forConcurrently_)
-import ChessEngine.UCI (GoProps(searchMoves))
+import Control.Concurrent.Async (race)
 
 type BestMove = (PositionEval, [Move])
 
@@ -48,14 +47,14 @@ data EvaluateParams = EvaluateParams
     threadIndex :: !Int
   }
 
--- TODO rename to Context
-data EvaluateResult = EvaluateResult
+data EvaluationContext = EvaluationContext
   { nodesParsed :: !Int,
     finished :: !Bool,
     evaluation :: !PositionEval,
     moves :: ![Move],
     latestEvaluationInfo :: [String],
-    showDebug :: !Bool
+    showDebug :: !Bool,
+    workerThreadCount :: !Int
   }
   deriving (Show)
 
@@ -71,7 +70,7 @@ data CandidatesFold = CandidatesFold
     nodesParsed :: !Int
   }
 
-type App = ReaderT (IORef EvaluateResult) IO
+type App = ReaderT (IORef EvaluationContext) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
 evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
@@ -368,23 +367,22 @@ evaluateIterationThread cache board lastDepthBest depth showDebug rootBoostCandi
 
 evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Int -> Bool -> App (BestMove, Int)
 evaluateIteration cache board lastDepthBest depth nodes showDebug = do
-    evalResultRef <- ask
+    env <- ask
+    context <- liftIO $ readIORef env
+    let threadCount = workerThreadCount context
     -- don't use extra threading for low depth
     let workerThreadCount = if depth > 5 then [2..threadCount] else []
-    let threadActions = makeThreadAction evalResultRef <$> 1 :| workerThreadCount
+    let threadActions = makeThreadAction env threadCount <$> 1 :| workerThreadCount
     (bestMove@(eval, moveLine), newNodes') <- liftIO $ raceMany threadActions
     -- (bestMove@(eval, moveLine), newNodes') <- liftIO $ parallelWaitForFirst threadActions
     let newNodes = nodes + newNodes' -- since thread returns only its nodes, not global
-    env <- ask
-    result <- liftIO $ readIORef env
     let lastEvalInfo = collectEvaluationInfo (turn board) newNodes eval moveLine
-    let newResult = result {nodesParsed = newNodes, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
+    let newResult = context {nodesParsed = newNodes, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
     liftIO $ writeIORef env newResult
     return (bestMove, newNodes)
     where
-        threadCount = 4
-        makeThreadAction :: IORef EvaluateResult -> Int -> IO (BestMove, Int)
-        makeThreadAction evalResultRef threadIndex = runReaderT (do
+        makeThreadAction :: IORef EvaluationContext -> Int -> Int -> IO (BestMove, Int)
+        makeThreadAction evalResultRef threadCount threadIndex = runReaderT (do
                 let scrambleCandidates :: [(Move, ChessBoard)] -> [(Move, ChessBoard)]
                     scrambleCandidates candidates = case splitAt (threadCount * 2) candidates  of
                                                         (xs, rest) -> if ((threadIndex - 1) * 2) < length xs
@@ -406,21 +404,16 @@ raceMany (a :| b : rest) = do
         Left l -> l
         Right r -> r
 
-parallelWaitForFirst :: NonEmpty (IO a) -> IO a
-parallelWaitForFirst (a :| []) = a
-parallelWaitForFirst (a :| rest) =
-    withAsync (forConcurrently_ rest id) $ \helpers -> a
-
 iterateM' :: (a -> App a) -> App a -> Int -> App a
 iterateM' f mx n = do
   if n == 0
     then mx
     else iterateM' f (mx >>= f) (n - 1)
 
-evaluate :: IORef EvaluateResult -> ChessBoard -> Int -> IO EvaluateResult
+evaluate :: IORef EvaluationContext -> ChessBoard -> Int -> IO EvaluationContext
 evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResultRef
   where
-    evaluateInReader :: App EvaluateResult
+    evaluateInReader :: App EvaluationContext
     evaluateInReader = do
       (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
       let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moves

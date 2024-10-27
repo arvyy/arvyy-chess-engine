@@ -41,8 +41,8 @@ positions =
 computePosition :: String -> String -> IO String
 computePosition fen expectedBestMove = do
   let (board, _) = fromJust $ loadFen fen
-  evalResultRef <- newIORef EvaluateResult {nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False}
-  EvaluateResult {nodesParsed, moves = (move : rest)} <- evaluate evalResultRef board 4
+  evalResultRef <- newIORef EvaluationContext {nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False, workerThreadCount = 1}
+  EvaluationContext {nodesParsed, moves = (move : rest)} <- evaluate evalResultRef board 4
   return $ "Expected best move: " ++ expectedBestMove ++ ", found move: " ++ (show move) ++ ". Nodes: " ++ (show nodesParsed)
 
 main :: IO ()

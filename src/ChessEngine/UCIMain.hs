@@ -26,10 +26,11 @@ data EngineState = EngineState
   { board :: !(Maybe ChessBoard),
     evalTimeLimit :: !(Maybe UTCTime),
     evalNodeLimit :: !(Maybe Int),
-    result :: !(Maybe (IORef EvaluateResult)),
+    result :: !(Maybe (IORef EvaluationContext)),
     workerThreadId :: Maybe ThreadId,
     killerThreadId :: Maybe ThreadId,
-    engineStateShowDebug :: !Bool
+    engineStateShowDebug :: !Bool,
+    engineStateWorkerThreads :: !Int
   }
 
 blank :: EngineState
@@ -41,7 +42,8 @@ blank =
       result = Nothing,
       workerThreadId = Nothing,
       killerThreadId = Nothing,
-      engineStateShowDebug = False
+      engineStateShowDebug = False,
+      engineStateWorkerThreads = 1
     }
 
 main :: IO ()
@@ -83,6 +85,7 @@ doHandleCommand :: UCICommand -> IORef EngineState -> UTCTime -> IO ()
 doHandleCommand UCI stateRef _ = do
   putStrLn "id name ArvyyChessEngine"
   putStrLn "id author github.com/arvyy"
+  putStrLn "option name threads type spin default 1 min 1 max 8"
   putStrLn ""
   putStrLn "uciok"
 doHandleCommand IsReady state _ = do
@@ -90,6 +93,11 @@ doHandleCommand IsReady state _ = do
 doHandleCommand (Debug enable) stateRef _ = do
   state <- readIORef stateRef
   let state' = state {engineStateShowDebug = enable}
+  writeIORef stateRef state'
+doHandleCommand (SetOption "threads" (Just n)) stateRef _ = do
+  let threadCount = read n :: Int
+  state <- readIORef stateRef
+  let state' = state {engineStateWorkerThreads = threadCount}
   writeIORef stateRef state'
 doHandleCommand (Position board') stateRef _ = do
   state <- readIORef stateRef
@@ -110,7 +118,14 @@ doHandleCommand (Go props) stateRef now = do
         if infinite props
           then Nothing
           else explicitDeadline <|> implicitDeadline
-  evalResultRef <- newIORef EvaluateResult {nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = (engineStateShowDebug state), latestEvaluationInfo = []}
+  evalResultRef <- newIORef EvaluationContext 
+                                { nodesParsed = 0
+                                , finished = False
+                                , evaluation = PositionEval 0
+                                , moves = []
+                                , showDebug = (engineStateShowDebug state)
+                                , workerThreadCount = (engineStateWorkerThreads state)
+                                , latestEvaluationInfo = []}
 
   -- worker thread doing calculation
   workerThreadId' <- forkIO $ do
@@ -148,7 +163,7 @@ doHandleCommand (Go props) stateRef now = do
   writeIORef stateRef newState
   where
     showBestMoveAndClear stateRef result = do
-      let EvaluateResult {moves = moves, latestEvaluationInfo = latestEvaluationInfo} = result
+      let EvaluationContext {moves = moves, latestEvaluationInfo = latestEvaluationInfo} = result
       liftIO $ forM_ latestEvaluationInfo putStrLn
       case moves of
         [] -> return ()
