@@ -44,7 +44,7 @@ where
 import ChessEngine.PrecomputedCandidateMoves
 import Data.Bits
 import Data.Char
-import Data.Foldable (find, foldl')
+import Data.Foldable (find, foldl', foldlM)
 import Data.Hashable
 import Data.Int (Int64)
 import Data.Maybe
@@ -54,6 +54,7 @@ import Data.Word (Word64)
 import Data.Array.IArray
 import System.Random.TF (mkTFGen)
 import System.Random (randoms)
+import Data.List (unfoldr)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -102,11 +103,22 @@ playerKingPosition ChessBoard {pieces = ChessBoardPositions {black, white, kings
 
 bitmapToCoords :: Int64 -> [(Int, Int)]
 bitmapToCoords bitmap =
+    unfoldr unfoldStep bitmap
+  where
+    unfoldStep bitmap =
+        let index = countTrailingZeros bitmap
+         in if index == 64
+            then Nothing
+            else Just (bitIndexToCoords index, clearBit bitmap index)
+{-
+bitmapToCoords :: Int64 -> [(Int, Int)]
+bitmapToCoords bitmap =
   if index == 64
     then []
     else bitIndexToCoords index : bitmapToCoords (clearBit bitmap index)
   where
     index = countTrailingZeros bitmap
+-}
 
 bitIndexToCoords :: Int -> (Int, Int)
 bitIndexToCoords index =
@@ -568,12 +580,24 @@ pieceThreats board (x, y, ChessPiece color Horse) =
 rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
 rayToValidMoves color board squares = filterUntilHit squares
   where
-    filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
+    {-
     filterUntilHit ((x, y) : rest)
       | isPlayerOnSquare board color x y = []
       | isPlayerOnSquare board (otherPlayer color) x y = [(x, y)]
       | otherwise = (x, y) : filterUntilHit rest
     filterUntilHit [] = []
+    -}
+    filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
+    filterUntilHit positions = 
+        case foldlM foldStep [] positions of
+            Right moves -> moves
+            Left moves -> moves
+
+    foldStep :: [(Int, Int)] -> (Int, Int) -> Either [(Int, Int)] [(Int, Int)]
+    foldStep moves (x, y)
+      | isPlayerOnSquare board color x y = Left moves
+      | isPlayerOnSquare board (otherPlayer color) x y = Left $ (x, y):moves
+      | otherwise = Right $ (x, y) : moves
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
 squareUnderThreat board player x y =
@@ -589,6 +613,7 @@ squareUnderThreat board player x y =
         (\(x', y') -> hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
         (emptyBoardHorseHops x y)
 
+      {-
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
       let fold ((x', y') : rest) =
@@ -600,6 +625,17 @@ squareUnderThreat board player x y =
             )
           fold [] = False
        in fold ray
+      -}
+    threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
+    threatenedOnRay threateningTypes ray =
+      case foldlM foldStep False ray of
+        Right _ -> False
+        Left t -> t
+
+      where
+        foldStep _ (x, y)
+            | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = Left $ color' == opponentColor && elem pieceType' threateningTypes
+            | otherwise = Right False
 
     threatenedByBishopOrQueen = any (\ray -> threatenedOnRay [Queen, Bishop] ray) (emptyBoardBishopRays x y)
     threatenedByRockOrQueen = any (\ray -> threatenedOnRay [Queen, Rock] ray) (emptyBoardRockRays x y)
@@ -621,6 +657,7 @@ playerPotentiallyPinned board player =
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition board player
 
+    {-
     checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
     checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
       let ownPiece = isPlayerOnSquare board player x y
@@ -637,6 +674,28 @@ playerPotentiallyPinned board player =
                     then checkRayPin rest True pinnerTypes
                     else False
     checkRayPin [] _ _ = False
+    -}
+    checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
+    checkRayPin moves ownPieceSeen pinnerTypes =
+        case foldlM foldStepper ownPieceSeen moves of
+            Right _ -> False
+            Left v -> v
+
+        where
+            foldStepper ownPieceSeen (x, y) =
+              let ownPiece = isPlayerOnSquare board player x y
+                  opponentPiece = isPlayerOnSquare board opponentColor x y
+               in if not ownPiece && not opponentPiece
+                    then Right ownPieceSeen
+                    else
+                      if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
+                        Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
+                        _ -> False
+                        then Left True
+                        else
+                          if not ownPieceSeen && ownPiece
+                            then Right True
+                            else Left False
 
 {-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> Bool
