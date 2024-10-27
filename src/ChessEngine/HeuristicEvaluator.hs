@@ -97,9 +97,14 @@ finalDepthEval' infoConsumer cache board = do
     addScore :: (Monoid m) => (Int, m) -> (Int, m) -> (Int, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
 
+{-
     addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
     addScores [a, b] = addScore a b
     addScores (x : rest) = addScore x (addScores rest)
+-}
+    addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
+    addScores scores =
+        foldl' addScore (0, mempty) scores
 
     explain :: (Monoid m) => (String -> m) -> Int -> String -> (Int, m)
     explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))

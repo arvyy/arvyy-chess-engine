@@ -21,6 +21,8 @@ import Data.List (intercalate, partition, sortBy)
 import Data.Maybe (isJust, mapMaybe)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Control.Concurrent.Async (race)
+import Data.Foldable (foldlM)
+import Control.Monad.Trans.Except (ExceptT, except, runExceptT)
 
 type BestMove = (PositionEval, [Move])
 
@@ -194,6 +196,7 @@ horizonEval cache board alpha beta =
       let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
 
+{-
 foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
 foldHorizonEval cache board (move : rest) alpha beta = do
   value <- negateEval <$> horizonEval cache (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
@@ -202,6 +205,21 @@ foldHorizonEval cache board (move : rest) alpha beta = do
     then return value
     else foldHorizonEval cache board rest alpha' beta
 foldHorizonEval _ _ [] alpha _ = return alpha
+-}
+foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
+foldHorizonEval cache board moves alpha beta = do
+    result <- runExceptT $ foldlM foldStep (alpha, beta) moves
+    return $ case result of
+                Left value -> value
+                Right (alpha, _) -> alpha
+    where
+        foldStep :: (PositionEval, PositionEval) -> Move -> ExceptT PositionEval IO (PositionEval, PositionEval)
+        foldStep (alpha, beta) move = do
+            value <- liftIO $ negateEval <$> horizonEval cache (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
+            let alpha' = max alpha value
+            if value >= beta
+              then except $ Left value
+              else return (alpha', beta)
 
 evaluate'' :: ChessCache -> EvaluateParams -> [(Move, ChessBoard)] -> App (BestMove, Int, TableValueBound)
 evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove, showUCIInfo, threadIndex} candidates

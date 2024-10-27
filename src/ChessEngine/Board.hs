@@ -77,6 +77,7 @@ positionsToList positions types =
 
 -- returns list of positions for given player
 {-# INLINE playerPositionsToList #-}
+{-
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 playerPositionsToList positions@ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color (t : rest) =
   let bitmap = case t of
@@ -94,6 +95,28 @@ playerPositionsToList positions@ChessBoardPositions {black, white, bishops, hors
       (x, y) <- bitmapToCoords bitmap'
       return (x, y, ChessPiece color pieceType)
 playerPositionsToList _ _ [] = []
+-}
+playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
+playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types =
+    concatMap getTypeValues types
+    where
+        playerbitmap = if color == White then white else black
+
+        getTypeValues :: ChessPieceType -> [(Int, Int, ChessPiece)]
+        getTypeValues t = 
+          let bitmap = case t of
+                Pawn -> pawns
+                Bishop -> bishops
+                Horse -> horses
+                Rock -> rocks
+                Queen -> queens
+                King -> kings
+           in collectValues t bitmap
+
+        collectValues pieceType bitmap = do
+          let bitmap' = bitmap .&. playerbitmap
+          (x, y) <- bitmapToCoords bitmap'
+          return (x, y, ChessPiece color pieceType)
 
 {-# INLINE playerKingPosition #-}
 playerKingPosition :: ChessBoard -> PlayerColor -> (Int, Int)
