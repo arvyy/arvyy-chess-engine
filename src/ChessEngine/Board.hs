@@ -75,6 +75,7 @@ positionsToList positions types =
   playerPositionsToList positions White types ++ playerPositionsToList positions Black types
 
 -- returns list of positions for given player
+{-# INLINE playerPositionsToList #-}
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 playerPositionsToList positions@ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color (t : rest) =
   let bitmap = case t of
@@ -167,6 +168,7 @@ quickMaterialCount board player =
         + (popCount (rocks p .&. playerBits)) * 5
         + (popCount (queens p .&. playerBits)) * 9
 
+{-# INLINE pieceOnSquare' #-}
 pieceOnSquare' :: ChessBoardPositions -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawns rocks) x y = do
   _ <- if inBounds x y then return True else Nothing
@@ -344,6 +346,7 @@ isPlayerOnSquare ChessBoard {pieces = ChessBoardPositions {black}} Black x y =
   let bitIndex = coordsToBitIndex x y
    in testBit black bitIndex
 
+{-# INLINE pieceOnSquare #-}
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board = pieceOnSquare' (pieces board)
 
@@ -583,14 +586,13 @@ squareUnderThreat board player x y =
     opponentColor = if player == White then Black else White
     threatenedByHorse =
       any
-        (\(x', y') -> inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
+        (\(x', y') -> hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
         (emptyBoardHorseHops x y)
 
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
       let fold ((x', y') : rest) =
-            ( inBounds x' y'
-                && ( case pieceOnSquare board x' y' of
+            (( case pieceOnSquare board x' y' of
                        Just (ChessPiece color' pieceType') ->
                          color' == opponentColor && elem pieceType' threateningTypes
                        Nothing -> fold rest
