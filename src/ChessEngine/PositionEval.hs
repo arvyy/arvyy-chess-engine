@@ -21,9 +21,14 @@ import Data.List (intercalate, partition, sortBy)
 import Data.Maybe (isJust, mapMaybe)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Control.Concurrent.Async (race)
-import Data.Foldable (foldlM)
+import Data.Foldable (foldlM, toList)
 import Control.Monad.Trans.Except (ExceptT(..), except, runExceptT)
 import Control.Monad.Trans.Class (MonadTrans(..))
+import qualified Data.Vector as VI
+import qualified Data.Vector.Mutable as V
+import qualified VectorBuilder.MVector as VM
+import qualified VectorBuilder.Vector as VB
+import GHC.IO (stToIO)
 
 type BestMove = (PositionEval, [Move])
 
@@ -80,7 +85,9 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
       let depth = max depth' 0
       tableHit <- liftIO $ getValue cache board
       let doSearch = do
-            sortedCandidates <- liftIO $ sortCandidates cache board ply threadIndex (pseudoLegalCandidateMoves board)
+            candidateMovesVec <- liftIO $ stToIO $ VM.build $ (pseudoLegalCandidateMoves board)
+            liftIO $ sortCandidates cache board ply threadIndex candidateMovesVec
+            sortedCandidates <- liftIO $ V.foldr (:) [] candidateMovesVec
             let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
             let sortedCandidatesWithBoards' = 
                     if depth == maxDepth
@@ -108,38 +115,31 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
                 else doSearch
         Nothing -> doSearch
 
-sortCandidates :: ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
-sortCandidates cache board ply threadIndex candidates =
-  do
-    (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves candidates
-    let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
-    (killerMoves, otherMoves'') <- partitionKillerMoves otherMoves'
-    return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
+sortCandidates :: ChessCache -> ChessBoard -> Int -> Int -> V.IOVector Move -> IO ()
+sortCandidates cache board ply threadIndex candidates = do
+    offset <- partitionAndSortCacheMoves candidates
+    offset <- partitionAndSortCaptureMoves board $ V.slice offset (V.length candidates - offset) candidates
+    _ <- partitionKillerMoves $ V.slice offset (V.length candidates - offset) candidates
+    return ()
   where
-    partitionAndSortCacheMoves :: [Move] -> IO ([Move], [Move])
+    partitionAndSortCacheMoves :: V.IOVector Move -> IO Int
     partitionAndSortCacheMoves moves = do
       maybeCachedMove <- getValue cache board
-      return $ case maybeCachedMove of
-        Just (TranspositionValue _ _ _ (move : _)) -> partition (\m -> move == m) moves
-        _ -> ([], moves)
+      case maybeCachedMove of
+        Just (TranspositionValue _ _ _ (move : _)) -> partitionVector (\m -> move == m) moves
+        _ -> return 0
 
-    partitionKillerMoves :: [Move] -> IO ([Move], [Move])
+    partitionKillerMoves :: V.IOVector Move -> IO Int
     partitionKillerMoves moves = do
       killers <- getKillerMoves cache (ply, threadIndex)
-      return $ partition (\m -> elem m killers) moves
+      partitionVector (\m -> elem m killers) moves
 
-partitionAndSortCaptureMoves :: ChessBoard -> [Move] -> ([Move], [Move], [Move])
+partitionAndSortCaptureMoves :: ChessBoard -> V.IOVector Move -> IO Int
 partitionAndSortCaptureMoves board moves =
   {-# SCC "m_partitionAndSortCaptureMoves" #-}
-  let augmentedMoves = augmentWithCaptureInfo <$> moves
-      (captureMoves, otherMoves) = partition (\(_, capture) -> isJust capture) augmentedMoves
-      (goodCaptures, badCaptures) = partition (\(_, Just n) -> n >= 0) captureMoves
-      removeCaptureInfo (move, _) = move
-      captureMoveComparator (_, Just v1) (_, Just v2) = compare v1 v2
-      goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
-      badCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) badCaptures)
-      otherMoves' = removeCaptureInfo <$> otherMoves
-   in (goodCaptures', badCaptures', otherMoves')
+  do
+  captureMovesOffset <- partitionVector (\m -> case augmentWithCaptureInfo m of (_, Just n) -> n >= 0; _ -> False) moves
+  return captureMovesOffset
   where
     captureScore :: ChessPieceType -> Int
     captureScore Pawn = 100
@@ -156,13 +156,31 @@ partitionAndSortCaptureMoves board moves =
             return $ captureScore capturedType - captureScore capturingType
        in (move, diff)
 
+partitionVector :: forall a. (a -> Bool) -> V.IOVector a -> IO Int
+partitionVector test vec = do
+    matched <- go 0 0
+    return matched
+    where
+      size = V.length vec
+      go matched unmatched
+        | matched + unmatched == size = return matched
+        | otherwise = do
+            el <- V.read vec matched
+            if test el
+            then go (matched + 1) unmatched
+            else do
+                V.swap vec matched (size - unmatched - 1) 
+                go matched (unmatched + 1)
+        
+
+
 horizonEval :: ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
 horizonEval cache board alpha beta =
   {-# SCC "m_horizonEval" #-}
   if playerInCheck board
     then
       {-# SCC "m_horizonEval_incheck" #-}
-      let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+      let moves = sortMoves $ filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMovesList board)
        in if (null moves)
             then return $ outOfMovesEval board
             else foldHorizonEval cache board moves alpha beta
@@ -171,7 +189,7 @@ horizonEval cache board alpha beta =
       do
         pat <- finalDepthEval cache board
         let alpha' = max alpha pat
-        let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+        let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMovesList board))
         if pat >= beta
           then return pat
           else foldHorizonEval cache board capturingMoves alpha' beta
@@ -190,9 +208,12 @@ horizonEval cache board alpha beta =
         Just (ChessPiece _ Queen) -> evalAdd pat (900 + deltaBuffer) > alpha
         _ -> False
 
-    sortMoves moves =
+    sortMoves moves = moves
+        -- TODO
+        {-
       let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
+       -}
 
 {-
 foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval

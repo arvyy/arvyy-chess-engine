@@ -25,7 +25,7 @@ dividePosition fen depth = do
   where
     printNodes :: ChessBoard -> Integer -> IO ()
     printNodes board depth =
-      let candidates = pseudoLegalCandidateMoves board
+      let candidates = pseudoLegalCandidateMovesList board
           validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board candidate) candidates
           candidatesInfo = (\candidate -> (fromJust (moveToString candidate), countNodes (fromJust $ candidateMoveLegal board candidate) (depth - 1))) <$> validCandidates
           totalCount = foldl' (+) 0 (snd <$> candidatesInfo)
@@ -39,7 +39,7 @@ dividePosition fen depth = do
     countNodes board depth
       | depth == 0 = 1
       | otherwise =
-          let candidates = pseudoLegalCandidateMoves board
+          let candidates = pseudoLegalCandidateMovesList board
               validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board candidate) candidates
               countCandidates count move = count + countNodes (applyMoveUnsafe board move) (depth - 1)
            in foldl' countCandidates 0 validCandidates

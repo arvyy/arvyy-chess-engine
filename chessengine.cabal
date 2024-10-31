@@ -22,7 +22,9 @@ common deps
      regex-pcre-builtin >=0.95,
      stm-containers >=1.2.1,
      tf-random >=0.5,
-     random >=1.2
+     random >=1.2,
+     vector-builder >=0.3.8.5,
+     vector >=0.13
 
 
 library chess-internal

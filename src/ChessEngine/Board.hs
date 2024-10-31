@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -24,6 +25,7 @@ module ChessEngine.Board
     hasPieceOnSquare,
     pieceOnSquare,
     pseudoLegalCandidateMoves,
+    pseudoLegalCandidateMovesList,
     candidateMoveLegal,
     quickMaterialCount,
     is3foldRepetition,
@@ -44,7 +46,7 @@ where
 import ChessEngine.PrecomputedCandidateMoves
 import Data.Bits
 import Data.Char
-import Data.Foldable (find, foldl', foldlM)
+import Data.Foldable (find, foldl', foldlM, Foldable (toList))
 import Data.Hashable
 import Data.Int (Int64)
 import Data.Maybe
@@ -55,6 +57,9 @@ import Data.Array.IArray
 import System.Random.TF (mkTFGen)
 import System.Random (randoms)
 import Data.List (unfoldr)
+import qualified Data.Vector as V
+import qualified VectorBuilder.Builder as VB
+import qualified VectorBuilder.Vector as VV
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -73,7 +78,9 @@ instance Show ChessBoardPositions where
 
 positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 positionsToList positions types =
-  playerPositionsToList positions White types ++ playerPositionsToList positions Black types
+  let vec :: V.Vector (Int, Int, ChessPiece)
+      vec = VV.build $ playerPositionsToList positions White types VB.singleton <> playerPositionsToList positions Black types VB.singleton
+  in toList vec
 
 -- returns list of positions for given player
 {-# INLINE playerPositionsToList #-}
@@ -96,13 +103,14 @@ playerPositionsToList positions@ChessBoardPositions {black, white, bishops, hors
       return (x, y, ChessPiece color pieceType)
 playerPositionsToList _ _ [] = []
 -}
-playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
-playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types =
-    concatMap getTypeValues types
+--TODO rename, not a "toList"
+playerPositionsToList :: forall a. ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> ((Int, Int, ChessPiece) -> VB.Builder a)-> VB.Builder a
+playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types consumer =
+    mconcat $ map getTypeValues types
     where
         playerbitmap = if color == White then white else black
 
-        getTypeValues :: ChessPieceType -> [(Int, Int, ChessPiece)]
+        getTypeValues :: ChessPieceType -> VB.Builder a
         getTypeValues t = 
           let bitmap = case t of
                 Pawn -> pawns
@@ -113,7 +121,7 @@ playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens
                 King -> kings
            in collectValues t bitmap
 
-        collectValues pieceType bitmap = do
+        collectValues pieceType bitmap = mconcat . map consumer $ do
           let bitmap' = bitmap .&. playerbitmap
           (x, y) <- bitmapToCoords bitmap'
           return (x, y, ChessPiece color pieceType)
@@ -571,37 +579,50 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 -- given board and piece find threatened squares (for the purposes of check, castling, and eval for controlled squares)
 -- ignores own pin status
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
-pieceThreats board (x, y, ChessPiece color King) =
+pieceThreats board piece = 
+    let vec :: V.Vector (Int, Int)
+        vec = VV.build $ pieceThreats' board piece id
+    in toList vec
+
+{-# INLINE pieceThreats' #-}
+pieceThreats' :: ChessBoard -> (Int, Int, ChessPiece) -> ((Int, Int) -> a) -> VB.Builder a
+pieceThreats' board (x, y, ChessPiece color King) f =
   let hops = emptyBoardKingHops x y
-   in {-# SCC "m_pieceThreats_King" #-}
-      filter
-        (emptyOrOccupiedByOpponent board color)
-        hops
-pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} (pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop))
-pieceThreats board (x, y, ChessPiece color Pawn) =
-  {-# SCC "m_pieceThreats_Pawn" #-}
+   in {-# SCC "m_pieceThreats'_King" #-}
+      VB.foldable .
+      map f .
+      filter (emptyOrOccupiedByOpponent board color)
+      $ hops
+pieceThreats' board (x, y, ChessPiece color Queen) f = 
+    {-# SCC "m_pieceThreats'_Queen" #-} 
+    (pieceThreats' board (x, y, ChessPiece color Rock) f <> pieceThreats' board (x, y, ChessPiece color Bishop) f)
+pieceThreats' board (x, y, ChessPiece color Pawn) f =
+  {-# SCC "m_pieceThreats'_Pawn" #-}
   let nextRow = if color == Black then y - 1 else y + 1
       candidates = [(x - 1, nextRow), (x + 1, nextRow)]
-   in filter
-        (emptyOrOccupiedByOpponent board color)
-        candidates
-pieceThreats board (x, y, ChessPiece color Bishop) =
-  {-# SCC "m_pieceThreats_Bishop" #-}
+   in VB.foldable .
+      map f .
+      filter (emptyOrOccupiedByOpponent board color)
+      $ candidates
+pieceThreats' board (x, y, ChessPiece color Bishop) f =
+  {-# SCC "m_pieceThreats'_Bishop" #-}
   let rays = emptyBoardBishopRays x y
-   in concatMap (rayToValidMoves color board) rays
-pieceThreats board (x, y, ChessPiece color Rock) =
-  {-# SCC "m_pieceThreats_Rock" #-}
+   in mconcat $ map (rayToValidMoves color board f) rays
+pieceThreats' board (x, y, ChessPiece color Rock) f =
+  {-# SCC "m_pieceThreats'_Rock" #-}
   let rays = emptyBoardRockRays x y
-   in concatMap (rayToValidMoves color board) rays
-pieceThreats board (x, y, ChessPiece color Horse) =
-  {-# SCC "m_pieceThreats_Horse" #-}
+   in mconcat $ map (rayToValidMoves color board f) rays
+pieceThreats' board (x, y, ChessPiece color Horse) f =
+  {-# SCC "m_pieceThreats'_Horse" #-}
   let hops = emptyBoardHorseHops x y
-   in filter
-        (emptyOrOccupiedByOpponent board color)
-        hops
+   in VB.foldable .
+      map f .
+      filter (emptyOrOccupiedByOpponent board color)
+      $ hops
 
-rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
-rayToValidMoves color board squares = filterUntilHit squares
+{-# INLINE rayToValidMoves #-}
+rayToValidMoves :: PlayerColor -> ChessBoard -> ((Int, Int) -> a) -> [(Int, Int)] -> VB.Builder a
+rayToValidMoves color board f squares = filterUntilHit squares f
   where
     {-
     filterUntilHit ((x, y) : rest)
@@ -610,17 +631,19 @@ rayToValidMoves color board squares = filterUntilHit squares
       | otherwise = (x, y) : filterUntilHit rest
     filterUntilHit [] = []
     -}
-    filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
-    filterUntilHit positions = 
-        case foldlM foldStep [] positions of
-            Right moves -> moves
-            Left moves -> moves
+    filterUntilHit :: [(Int, Int)] -> ((Int, Int) -> a) -> VB.Builder a
+    filterUntilHit positions f = 
+        let count = case foldlM countFoldStep 0 positions of
+                        Right n -> n
+                        Left n -> n
+            moves = take count positions 
+        in VB.foldable $ map f moves
 
-    foldStep :: [(Int, Int)] -> (Int, Int) -> Either [(Int, Int)] [(Int, Int)]
-    foldStep moves (x, y)
-      | isPlayerOnSquare board color x y = Left moves
-      | isPlayerOnSquare board (otherPlayer color) x y = Left $ (x, y):moves
-      | otherwise = Right $ (x, y) : moves
+    countFoldStep :: Int -> (Int, Int) -> Either Int Int
+    countFoldStep count (x, y)
+      | isPlayerOnSquare board color x y = Left count
+      | isPlayerOnSquare board (otherPlayer color) x y = Left $ count + 1
+      | otherwise = Right $ count + 1
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
 squareUnderThreat board player x y =
@@ -730,7 +753,7 @@ playerInCheck' board player =
   let (x, y) = playerKingPosition board player
    in squareUnderThreat board player x y
 
-pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
+pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> VB.Builder Move
 pawnCandidateMoves board x y player =
   let (dir, inStartingPos, inEnPassantPos, promotesOnMove) =
         if player == White
@@ -741,7 +764,7 @@ pawnCandidateMoves board x y player =
         inBounds x (y + dir) && case pieceOnSquare board x y' of
           Just _ -> False
           Nothing -> True
-      normalCaptures = do
+      normalCaptures = VB.foldable $ do
         x' <- [x - 1, x + 1]
         x' <- ([x' | inBounds x' y'])
         x' <- case pieceOnSquare board x' y' of
@@ -751,7 +774,7 @@ pawnCandidateMoves board x y player =
           then do
             createMove x y x' y' <$> [PromoQueen, PromoRock, PromoBishop, PromoHorse]
           else return $ createMove x y x' y' NoPromo
-      enPassantCaptures = do
+      enPassantCaptures = VB.foldable $ do
         x' <- [x - 1, x + 1]
         x' <- ([x' | inBounds x' y'])
         x' <- ([x' | inEnPassantPos])
@@ -765,12 +788,12 @@ pawnCandidateMoves board x y player =
                 Just _ -> False
                 Nothing -> True
             canDoubleDip = inStartingPos && aheadIsClear && doubleAheadIsClear
-         in ([createMove x y x (y + 2 * dir) NoPromo | canDoubleDip])
+         in VB.foldable [createMove x y x (y + 2 * dir) NoPromo | canDoubleDip]
       singleMove
-        | aheadIsClear && not promotesOnMove = [createMove x y x (y + dir) NoPromo]
-        | aheadIsClear && promotesOnMove = map (\promotion -> createMove x y x (y + dir) promotion) [PromoQueen, PromoRock, PromoHorse, PromoBishop]
-        | otherwise = []
-   in normalCaptures ++ enPassantCaptures ++ doubleDipMove ++ singleMove
+        | aheadIsClear && not promotesOnMove = VB.singleton $ createMove x y x (y + dir) NoPromo
+        | aheadIsClear && promotesOnMove = VB.foldable $ map (\promotion -> createMove x y x (y + dir) promotion) [PromoQueen, PromoRock, PromoHorse, PromoBishop]
+        | otherwise = VB.empty
+   in normalCaptures <> enPassantCaptures <> doubleDipMove <> singleMove
 
 canCastleKingSide :: ChessBoard -> PlayerColor -> Bool
 canCastleKingSide board color =
@@ -796,31 +819,33 @@ canCastleQueenSide board color =
         _ -> True
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
-kingCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
+kingCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> VB.Builder Move
 kingCandidateMoves board x y player =
-  let baseMoves =
-        map (\(x', y') -> createMove x y x' y' NoPromo) $
-          pieceThreats board (x, y, ChessPiece player King)
-      castleKingSide = ([createMove x y 7 y NoPromo | canCastleKingSide board player])
-      castleQueenSide = ([createMove x y 3 y NoPromo | canCastleQueenSide board player])
-   in baseMoves ++ castleKingSide ++ castleQueenSide
+  let baseMoves = pieceThreats' board (x, y, ChessPiece player King) (\(x', y') -> createMove x y x' y' NoPromo)
+      castleKingSide = VB.foldable [createMove x y 7 y NoPromo | canCastleKingSide board player]
+      castleQueenSide = VB.foldable [createMove x y 3 y NoPromo | canCastleQueenSide board player]
+   in baseMoves <> castleKingSide <> castleQueenSide
 
-pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
+pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> VB.Builder Move
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
-pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color
+pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color 
 pieceCandidateMoves board piece@(x, y, _) =
-  map
-    (\(x', y') -> createMove x y x' y' NoPromo)
-    (pieceThreats board piece)
+    (pieceThreats' board piece (\(x', y') -> createMove x y x' y' NoPromo))
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
 -- ie., pseudo legal
-pseudoLegalCandidateMoves :: ChessBoard -> [Move]
+pseudoLegalCandidateMoves :: ChessBoard -> VB.Builder Move
 pseudoLegalCandidateMoves board =
   {-# SCC "m_pseudoLegalCandidateMoves" #-}
   let player = turn board
-      playerPieces = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King]
-   in concatMap (\p -> pieceCandidateMoves board p) playerPieces
+      moves = playerPositionsToList (pieces board) player [Pawn, Bishop, Horse, Rock, Queen, King] (\p -> pieceCandidateMoves board p)
+   in moves
+
+pseudoLegalCandidateMovesList :: ChessBoard -> [Move]
+pseudoLegalCandidateMovesList board =
+    let vec :: V.Vector Move
+        vec = VV.build $ pseudoLegalCandidateMoves board
+    in toList vec
 
 -- returns just if given candidate is legal, empty otherwise
 -- (candidate can be illegal because pseudoLegalCandidateMoves returns pseudolegal moves)
@@ -849,8 +874,9 @@ candidateMoveLegal board candidate =
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
-  let candidates = pseudoLegalCandidateMoves board
-  matchedCandidate <- find (\move' -> move' == move) candidates
+  let candidatesVec :: V.Vector Move
+      candidatesVec = VV.build $ pseudoLegalCandidateMoves board
+  matchedCandidate <- V.find (\move' -> move' == move) candidatesVec
   candidateMoveLegal board matchedCandidate
 
 -- return Just (capturingType, capturedType) if this is capture

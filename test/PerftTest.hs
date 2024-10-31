@@ -17,8 +17,9 @@ import Test.Tasty.QuickCheck as QC
 -- FEN + expected result for depth 5
 perftTestData :: [(String, Integer)]
 perftTestData =
-  [ {-
-    ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ", 4865609),
+  [ 
+    ("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1 ", 4865609)
+    {-,
     ("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - ", 193690690),
     ("8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - ", 674624),
     ("r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1", 15833292),
@@ -30,7 +31,7 @@ perftTestData =
 countNodes board depth
   | depth == 0 = 1
   | otherwise =
-      let candidates = pseudoLegalCandidateMoves board
+      let candidates = pseudoLegalCandidateMovesList board
           validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board candidate) candidates
           countCandidates count move = count + countNodes (applyMoveUnsafe board move) (depth - 1)
        in foldl' countCandidates 0 validCandidates

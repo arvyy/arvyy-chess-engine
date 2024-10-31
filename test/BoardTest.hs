@@ -14,7 +14,7 @@ import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
 
-candidateMoves board = mapMaybe mapper $ pseudoLegalCandidateMoves board
+candidateMoves board = mapMaybe mapper $ pseudoLegalCandidateMovesList board
   where
     mapper move = do
       board' <- candidateMoveLegal board move
