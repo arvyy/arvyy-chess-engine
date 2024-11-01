@@ -22,9 +22,9 @@ evaluatePawns cache board = do
     doEvaluatePawns ((x, y, ChessPiece color _) : rest) =
       let score =
             100
-              + (if isPassedPawn x y color then 40 else 0)
-              + (if isBackwardDoubledPawn x y color then (-30) else 0)
-              + (if isProtectedPawn x y color then 50 else 0)
+              + (if isPassedPawn x y color then 10 else 0)
+              + (if isBackwardDoubledPawn x y color then (-20) else 0)
+              + (if isProtectedPawn x y color then 15 else 0)
               + (floor $ 100 * piecePositionBonus x y (ChessPiece color Pawn))
               + 0
           multiplier = if color == White then 1 else -1
