@@ -160,7 +160,8 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
 -- score most likely to be negative, ie, penalty for lacking safety
 scoreKingSafety :: ChessBoard -> PlayerColor -> Int
 scoreKingSafety board player =
-  floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier
+  (floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier)
+  + scoreKingOnEdgeInEndgame
   where
     (king_x, king_y) = playerKingPosition board player
 
@@ -195,6 +196,18 @@ scoreKingSafety board player =
 
     -- TODO
     -- scoreOpenFile
+
+    -- when this side is down to king, score it worse the closer it is to edge
+    -- so that winning side knows to push it towards the edge and not blunder 50-move draw
+    scoreKingOnEdgeInEndgame :: Int
+    scoreKingOnEdgeInEndgame =
+        let myMaterial = fromIntegral $ quickMaterialCount board player
+            losingEndgame = myMaterial == 0
+            distanceToEdgeX = (min king_x (9 - king_x)) - 1
+            distanceToEdgeY = (min king_y (9 - king_y)) - 1
+            distanceToEdge = min distanceToEdgeX distanceToEdgeY
+            penalty = (3 - distanceToEdge) * (-100)
+        in if losingEndgame then penalty else 0
 
     safetyMultiplier :: Float
     safetyMultiplier =
