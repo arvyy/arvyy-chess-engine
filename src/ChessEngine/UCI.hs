@@ -7,6 +7,7 @@ module ChessEngine.UCI
 where
 
 import ChessEngine.Board
+import ChessEngine.CandidateMoves
 import Control.Applicative
 import Data.List
 import Text.Read (readMaybe)

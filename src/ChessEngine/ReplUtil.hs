@@ -1,6 +1,7 @@
 module ChessEngine.ReplUtil where
 
 import ChessEngine.Board
+import ChessEngine.CandidateMoves
 import ChessEngine.HeuristicEvaluator (finalDepthEvalExplained)
 import Control.Monad (forM_)
 import Data.Maybe (isJust, fromJust)

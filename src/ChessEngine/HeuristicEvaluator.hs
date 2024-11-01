@@ -3,6 +3,7 @@
 module ChessEngine.HeuristicEvaluator (finalDepthEval, finalDepthEvalExplained) where
 
 import ChessEngine.Board
+import ChessEngine.CandidateMoves
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
 import Data.Foldable
@@ -18,8 +19,8 @@ evaluatePawns cache board = do
       putPawnEvaluation cache key pawnEvaluation'
       return pawnEvaluation'
   where
-    doEvaluatePawns :: [(Int, Int, ChessPiece)] -> Int
-    doEvaluatePawns ((x, y, ChessPiece color _) : rest) =
+    doEvaluatePawns :: [CoordWithPiece] -> Int
+    doEvaluatePawns ((CoordWithPiece' (Coord' x y) (ChessPiece color _)) : rest) =
       let score =
             100
               + (if isPassedPawn x y color then 40 else 0)
@@ -97,11 +98,6 @@ finalDepthEval' infoConsumer cache board = do
     addScore :: (Monoid m) => (Int, m) -> (Int, m) -> (Int, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
 
-{-
-    addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
-    addScores [a, b] = addScore a b
-    addScores (x : rest) = addScore x (addScores rest)
--}
     addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
     addScores scores =
         foldl' addScore (0, mempty) scores
@@ -112,25 +108,25 @@ finalDepthEval' infoConsumer cache board = do
     explain' :: (Monoid m) => (String -> m) -> (Int, m) -> String -> (Int, m)
     explain' infoConsumer (score, explanation) text = (score, explanation <> infoConsumer (text ++ ": " ++ (show score)))
 
-    scorePiece :: (Int, Int, ChessPiece) -> Int
-    scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
+    scorePiece :: CoordWithPiece -> Int
+    scorePiece piece@(CoordWithPiece' _ (ChessPiece player King)) = (0 + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(CoordWithPiece' _ (ChessPiece player Queen)) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(CoordWithPiece' _ (ChessPiece player Bishop)) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(CoordWithPiece' _ (ChessPiece player Horse)) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(CoordWithPiece' _ (ChessPiece player Rock)) = (500 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece (CoordWithPiece' _ (ChessPiece _ Pawn)) = 0 -- pawns are scored separately
 
-scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scorePieceThreats :: ChessBoard -> CoordWithPiece -> Int
 scorePieceThreats board piece =
   let isOwnSide y = case piece of
-        (_, _, ChessPiece White _) -> y < 4
+        (CoordWithPiece' _ (ChessPiece White _)) -> y < 4
         _ -> y > 5
       mobilityScore =
         foldl'
-          (\score (x, y) -> if isOwnSide y then score + 1 else score + 1.5)
+          (\score (Coord' x y) -> if isOwnSide y then score + 1 else score + 1.5)
           0.0
           (pieceThreats board piece)
-      (_, _, ChessPiece _ pieceType) = piece
+      (CoordWithPiece' _ (ChessPiece _ pieceType)) = piece
       (multiplier, maxBonus) = case pieceType of
         -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
         -- without developing other pieces
@@ -143,8 +139,8 @@ scorePieceThreats board piece =
    in floor $ min (log (1 + mobilityScore) * multiplier) maxBonus
 
 -- score from position tables only
-scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
-scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
+scorePiecePosition :: ChessBoard -> CoordWithPiece -> Int
+scorePiecePosition _ (CoordWithPiece' (Coord' x y) (piece@(ChessPiece _ pieceType))) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
         King -> 50
@@ -161,7 +157,7 @@ scoreKingSafety :: ChessBoard -> PlayerColor -> Int
 scoreKingSafety board player =
   floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier
   where
-    (king_x, king_y) = playerKingPosition board player
+    (Coord' king_x king_y) = playerKingPosition board player
 
     -- expect 3 pawns in front of king 2x3 rectangle; penalize by -1 for each missing pawn
     scorePawnShield :: Int

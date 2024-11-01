@@ -34,6 +34,7 @@ library chess-internal
     ChessEngine.ReplUtil,
     ChessEngine.Heatmaps, 
     ChessEngine.Board,
+    ChessEngine.CandidateMoves,
     ChessEngine.PositionEval,
     ChessEngine.UCI,
     ChessEngine.EvaluatorData,

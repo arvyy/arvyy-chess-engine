@@ -4,6 +4,7 @@
 module Main where
 
 import ChessEngine.Board
+import ChessEngine.CandidateMoves
 import ChessEngine.PositionEval
 import ChessEngine.PrecomputedCandidateMoves
 import ChessEngine.UCI
@@ -103,15 +104,15 @@ unitTests =
         candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo) @?= False,
 
       testCase "Precomputed rays" $ do
-        elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True
-        elem [(3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2)] (emptyBoardRockRays 2 2) @?= True
-        elem [(2, 1)] (emptyBoardRockRays 2 2) @?= True
-        elem [(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8)] (emptyBoardRockRays 2 2) @?= True
+        elem [(makeCoord 1 2)] (emptyBoardRockRays 2 2) @?= True
+        elem [(makeCoord 3 2), (makeCoord 4 2), (makeCoord 5 2), (makeCoord 6 2), (makeCoord 7 2), (makeCoord 8 2)] (emptyBoardRockRays 2 2) @?= True
+        elem [(makeCoord 2 1)] (emptyBoardRockRays 2 2) @?= True
+        elem [(makeCoord 2 3), (makeCoord 2 4), (makeCoord 2 5), (makeCoord 2 6), (makeCoord 2 7), (makeCoord 2 8)] (emptyBoardRockRays 2 2) @?= True
 
-        elem [(1, 1)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(3, 1)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(1, 3)] (emptyBoardBishopRays 2 2) @?= True
+        elem [(makeCoord 1 1)] (emptyBoardBishopRays 2 2) @?= True
+        elem [(makeCoord 3 3), (makeCoord 4 4), (makeCoord 5 5), (makeCoord 6 6), (makeCoord 7 7), (makeCoord 8 8)] (emptyBoardBishopRays 2 2) @?= True
+        elem [(makeCoord 3 1)] (emptyBoardBishopRays 2 2) @?= True
+        elem [(makeCoord 1 3)] (emptyBoardBishopRays 2 2) @?= True
     ]
 
 return []

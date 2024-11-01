@@ -1,6 +1,7 @@
 module Main where
 
 import ChessEngine.Board
+import ChessEngine.CandidateMoves
 import ChessEngine.PositionEval
 import ChessEngine.TimeManager
 import ChessEngine.UCI
