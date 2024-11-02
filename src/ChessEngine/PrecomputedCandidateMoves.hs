@@ -1,8 +1,6 @@
 module ChessEngine.PrecomputedCandidateMoves
   ( emptyBoardBishopRays,
-    emptyBoardRockRays,
-    emptyBoardHorseHops,
-    emptyBoardKingHops
+    emptyBoardRockRays
   )
 where
 
@@ -24,22 +22,6 @@ rockRays =
         return (coordsToIndex x y, computeRockRays x y)
    in array (0, 63) squares
 
-horseHops :: Array Int [(Int, Int)]
-horseHops =
-  let squares = do
-        x <- [1 .. 8]
-        y <- [1 .. 8]
-        return (coordsToIndex x y, computeHorseHops x y)
-   in array (0, 63) squares
-
-kingHops :: Array Int [(Int, Int)]
-kingHops =
-  let squares = do
-        x <- [1 .. 8]
-        y <- [1 .. 8]
-        return (coordsToIndex x y, computeKingHops x y)
-   in array (0, 63) squares
-
 coordsToIndex :: Int -> Int -> Int
 coordsToIndex x y = (x - 1) * 8 + y - 1
 
@@ -48,12 +30,6 @@ emptyBoardBishopRays x y = bishopRays ! coordsToIndex x y
 
 emptyBoardRockRays :: Int -> Int -> [[(Int, Int)]]
 emptyBoardRockRays x y = rockRays ! coordsToIndex x y
-
-emptyBoardHorseHops :: Int -> Int -> [(Int, Int)]
-emptyBoardHorseHops x y = horseHops ! coordsToIndex x y
-
-emptyBoardKingHops :: Int -> Int -> [(Int, Int)]
-emptyBoardKingHops x y = kingHops ! coordsToIndex x y
 
 computeBishopRays :: Int -> Int -> [[(Int, Int)]]
 computeBishopRays x y =
@@ -79,23 +55,6 @@ computeRay x y dx dy = do
   if inBounds x' y'
     then return (x', y')
     else mempty
-
-computeHorseHops :: Int -> Int -> [(Int, Int)]
-computeHorseHops x y =
-    let hops = [ (x + 1, y + 2)
-               , (x + 1, y - 2)
-               , (x - 1, y + 2)
-               , (x - 1, y - 2)
-               , (x + 2, y + 1)
-               , (x + 2, y - 1)
-               , (x - 2, y + 1)
-               , (x - 2, y - 1)]
-    in filter (\(x', y') -> inBounds x' y') hops
-
-computeKingHops :: Int -> Int -> [(Int, Int)]
-computeKingHops x y =
-    let hops = [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
-    in filter (\(x', y') -> inBounds x' y' && not (x == x' && y == y')) hops
 
 inBounds :: Int -> Int -> Bool
 inBounds x y = x >= 1 && x <= 8 && y >= 1 && y <= 8

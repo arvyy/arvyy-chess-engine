@@ -1,4 +1,3 @@
-{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
@@ -73,7 +72,7 @@ instance Show ChessBoardPositions where
 
 positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 positionsToList positions types =
-  playerPositionsToList positions White types ++ playerPositionsToList positions Black types
+  concatMap (\color -> playerPositionsToList positions color types) [White, Black]
 
 -- returns list of positions for given player
 {-# INLINE playerPositionsToList #-}
@@ -143,11 +142,16 @@ bitmapToCoords bitmap =
     index = countTrailingZeros bitmap
 -}
 
+{-# INLINE bitIndexToCoords #-}
 bitIndexToCoords :: Int -> (Int, Int)
 bitIndexToCoords index =
   let x' = mod index 8
       y' = div index 8
    in (x' + 1, y' + 1)
+
+coordsToBitmap :: [(Int, Int)] -> Int64
+coordsToBitmap coords =
+    foldl' (\bitmap (x, y) -> bitmap .|. (1 `shiftL` (coordsToBitIndex x y))) 0 coords
 
 {-# INLINE coordsToBitIndex #-}
 coordsToBitIndex :: Int -> Int -> Int
@@ -571,13 +575,15 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 -- given board and piece find threatened squares (for the purposes of check, castling, and eval for controlled squares)
 -- ignores own pin status
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
-pieceThreats board (x, y, ChessPiece color King) =
-  let hops = emptyBoardKingHops x y
-   in {-# SCC "m_pieceThreats_King" #-}
-      filter
-        (emptyOrOccupiedByOpponent board color)
-        hops
-pieceThreats board (x, y, ChessPiece color Queen) = {-# SCC "m_pieceThreats_Queen" #-} (pieceThreats board (x, y, ChessPiece color Rock) ++ pieceThreats board (x, y, ChessPiece color Bishop))
+pieceThreats ChessBoard { pieces = ChessBoardPositions{ white, black }} (x, y, ChessPiece color King) =
+  {-# SCC "m_pieceThreats_King" #-}
+  let baseHops = emptyBoardKingHops x y
+      bitboardMask = complement (if color == White then white else black)
+      hops = baseHops .&. bitboardMask
+   in bitmapToCoords hops
+pieceThreats board (x, y, ChessPiece color Queen) =
+  {-# SCC "m_pieceThreats_Queen" #-} 
+  concatMap (\pieceType -> pieceThreats board (x, y, ChessPiece color pieceType)) [Rock, Bishop]
 pieceThreats board (x, y, ChessPiece color Pawn) =
   {-# SCC "m_pieceThreats_Pawn" #-}
   let nextRow = if color == Black then y - 1 else y + 1
@@ -593,23 +599,16 @@ pieceThreats board (x, y, ChessPiece color Rock) =
   {-# SCC "m_pieceThreats_Rock" #-}
   let rays = emptyBoardRockRays x y
    in concatMap (rayToValidMoves color board) rays
-pieceThreats board (x, y, ChessPiece color Horse) =
+pieceThreats ChessBoard { pieces = ChessBoardPositions { white, black }} (x, y, ChessPiece color Horse) =
   {-# SCC "m_pieceThreats_Horse" #-}
-  let hops = emptyBoardHorseHops x y
-   in filter
-        (emptyOrOccupiedByOpponent board color)
-        hops
+  let baseHops = emptyBoardHorseHops x y
+      bitboardMask = complement (if color == White then white else black)
+      hops = baseHops .&. bitboardMask
+   in bitmapToCoords hops
 
 rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
 rayToValidMoves color board squares = filterUntilHit squares
   where
-    {-
-    filterUntilHit ((x, y) : rest)
-      | isPlayerOnSquare board color x y = []
-      | isPlayerOnSquare board (otherPlayer color) x y = [(x, y)]
-      | otherwise = (x, y) : filterUntilHit rest
-    filterUntilHit [] = []
-    -}
     filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
     filterUntilHit positions = 
         case foldlM foldStep [] positions of
@@ -623,7 +622,7 @@ rayToValidMoves color board squares = filterUntilHit squares
       | otherwise = Right $ (x, y) : moves
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
-squareUnderThreat board player x y =
+squareUnderThreat board@ChessBoard { pieces = ChessBoardPositions { horses, white, black } } player x y =
   threatenedByBishopOrQueen
     || threatenedByRockOrQueen
     || threatenedByHorse
@@ -632,23 +631,10 @@ squareUnderThreat board player x y =
   where
     opponentColor = if player == White then Black else White
     threatenedByHorse =
-      any
-        (\(x', y') -> hasPieceOnSquare board x' y' (ChessPiece opponentColor Horse))
-        (emptyBoardHorseHops x y)
+      let opponentHorses = (if opponentColor == White then white else black) .&. horses
+          matchedHorses = opponentHorses .&. (emptyBoardHorseHops x y)
+      in matchedHorses > 0
 
-      {-
-    threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
-    threatenedOnRay threateningTypes ray =
-      let fold ((x', y') : rest) =
-            (( case pieceOnSquare board x' y' of
-                       Just (ChessPiece color' pieceType') ->
-                         color' == opponentColor && elem pieceType' threateningTypes
-                       Nothing -> fold rest
-                   )
-            )
-          fold [] = False
-       in fold ray
-      -}
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
       case foldlM foldStep False ray of
@@ -680,24 +666,6 @@ playerPotentiallyPinned board player =
     opponentColor = if player == White then Black else White
     (x, y) = playerKingPosition board player
 
-    {-
-    checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
-    checkRayPin ((x, y) : rest) ownPieceSeen pinnerTypes =
-      let ownPiece = isPlayerOnSquare board player x y
-          opponentPiece = isPlayerOnSquare board opponentColor x y
-       in if not ownPiece && not opponentPiece
-            then checkRayPin rest ownPieceSeen pinnerTypes
-            else
-              if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
-                Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
-                _ -> False
-                then True
-                else
-                  if not ownPieceSeen && ownPiece
-                    then checkRayPin rest True pinnerTypes
-                    else False
-    checkRayPin [] _ _ = False
-    -}
     checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
     checkRayPin moves ownPieceSeen pinnerTypes =
         case foldlM foldStepper ownPieceSeen moves of
@@ -803,7 +771,7 @@ kingCandidateMoves board x y player =
           pieceThreats board (x, y, ChessPiece player King)
       castleKingSide = ([createMove x y 7 y NoPromo | canCastleKingSide board player])
       castleQueenSide = ([createMove x y 3 y NoPromo | canCastleQueenSide board player])
-   in baseMoves ++ castleKingSide ++ castleQueenSide
+   in castleKingSide ++ (castleQueenSide ++ baseMoves)
 
 pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
@@ -1069,3 +1037,42 @@ initialZebraHash' turn pieces wkc wqc bkc bqc enPeasent =
                 Just file -> zebraHashEnPeasent file
                 _ -> 0
     in piecesHashes `xor` wkcH `xor` wqcH `xor` bkcH `xor` bqcH `xor` turnH `xor` enPH
+
+horseHops :: Array Int Int64
+horseHops =
+  let squares = do
+        x <- [1 .. 8]
+        y <- [1 .. 8]
+        return (coordsToBitIndex x y, computeHorseHops x y)
+   in array (0, 63) squares
+
+computeHorseHops :: Int -> Int -> Int64
+computeHorseHops x y =
+    let hops = [ (x + 1, y + 2)
+               , (x + 1, y - 2)
+               , (x - 1, y + 2)
+               , (x - 1, y - 2)
+               , (x + 2, y + 1)
+               , (x + 2, y - 1)
+               , (x - 2, y + 1)
+               , (x - 2, y - 1)]
+    in coordsToBitmap $ filter (\(x', y') -> inBounds x' y') hops
+
+emptyBoardHorseHops :: Int -> Int -> Int64
+emptyBoardHorseHops x y = horseHops ! coordsToBitIndex x y
+
+kingHops :: Array Int Int64
+kingHops =
+  let squares = do
+        x <- [1 .. 8]
+        y <- [1 .. 8]
+        return (coordsToBitIndex x y, computeKingHops x y)
+   in array (0, 63) squares
+
+computeKingHops :: Int -> Int -> Int64
+computeKingHops x y =
+    let hops = [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
+    in coordsToBitmap $ filter (\(x', y') -> inBounds x' y' && not (x == x' && y == y')) hops
+
+emptyBoardKingHops :: Int -> Int -> Int64
+emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y

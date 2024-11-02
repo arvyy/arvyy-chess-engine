@@ -194,16 +194,6 @@ horizonEval cache board alpha beta =
       let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
 
-{-
-foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
-foldHorizonEval cache board (move : rest) alpha beta = do
-  value <- negateEval <$> horizonEval cache (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
-  let alpha' = max alpha value
-  if value >= beta
-    then return value
-    else foldHorizonEval cache board rest alpha' beta
-foldHorizonEval _ _ [] alpha _ = return alpha
--}
 foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
 foldHorizonEval cache board moves alpha beta = do
     result <- runExceptT $ foldlM foldStep (alpha, beta) moves
@@ -371,95 +361,6 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                   executeDefault
                 else
                   return candidatesFold { siblingIndex = (siblingIndex + 1), nodesParsed = newNodesParsed}
-
-
-
-
-
-{-
-
-      | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
-      | (not nullWindowTried) && siblingIndex > 0 && not (isNullWindow alpha beta) = do
-          let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
-              params' =
-                params
-                  { depth = (depth - (if tryLmr then 3 else 1)),
-                    ply = ply + 1,
-                    board = candidateBoard,
-                    nodesParsed = nodesParsed,
-                    alpha = negateEval nullBeta,
-                    beta = negateEval alpha
-                  }
-          evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
-          -- found better eval with lower depth and/or window -- retry
-          if eval > alpha
-            then
-              if tryLmr
-                then -- retry with null window but without lmr
-                  foldCandidates' candidatesFold {lmrTried = True, nodesParsed = newNodesParsed}
-                else -- retry full search
-                  foldCandidates' candidatesFold {lmrTried = True, nullWindowTried = True, nodesParsed = newNodesParsed}
-            else foldCandidates' candidatesFold {candidates = restCandidates, siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
-
-      -- if this is 3rd+ candidate move under consideration in a depth of 3+ from start,
-      -- evaluate with reduced depth (LMR).
-      | tryLmr = do
-          let params' =
-                params
-                  { depth = (depth - 3), -- subtract 2 to lower depth search in fringe node
-                    ply = ply + 1,
-                    board = candidateBoard,
-                    nodesParsed = nodesParsed,
-                    alpha = negateEval beta,
-                    beta = negateEval alpha
-                  }
-          evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
-          if eval > bestEval
-            then -- if found better move, re-evaluate with proper depth
-              foldCandidates' candidatesFold {lmrTried = True, nodesParsed = newNodesParsed}
-            else
-              foldCandidates' candidatesFold {candidates = restCandidates, siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
-      | otherwise = do
-          let params' =
-                params
-                  { depth = (depth - 1),
-                    ply = ply + 1,
-                    board = candidateBoard,
-                    nodesParsed = nodesParsed,
-                    alpha = negateEval beta,
-                    beta = negateEval alpha
-                  }
-          evaluated' <- evaluate' cache params'
-          let (moveValue@(eval, moveLine), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
-          newBestMoveValue <-
-            if (siblingIndex == 0 || eval > bestEval)
-              then do
-                when (depth == maxDepth) $ do
-                  let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moveLine
-                  when (threadIndex == 1) $ do
-                      env <- ask
-                      result <- liftIO $ readIORef env
-                      let newResult = result {nodesParsed = newNodesParsed, evaluation = eval, moves = moveLine, latestEvaluationInfo = lastEvalInfo}
-                      liftIO $ writeIORef env newResult
-                  when showUCIInfo $
-                    liftIO $
-                      forM_ lastEvalInfo putStrLn
-                return moveValue
-              else return bestMoveValue
-          let (alpha', raisedAlpha') =
-                let v = max eval bestEval
-                 in if (v > alpha)
-                      then (v, True)
-                      else (alpha, raisedAlpha)
-          foldCandidates' candidatesFold {raisedAlpha = raisedAlpha', bestMoveValue = newBestMoveValue, candidates = restCandidates, alpha = alpha', siblingIndex = (siblingIndex + 1), lmrTried = False, nullWindowTried = False, nodesParsed = newNodesParsed}
-      where
-        tryLmr = not lmrTried && siblingIndex > 1 && depth > 2
-    foldCandidates' CandidatesFold {raisedAlpha, bestMoveValue, nodesParsed}
-      | alpha >= beta = return (bestMoveValue, nodesParsed, LowerBound)
-      | otherwise = return (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
--}
 
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1
