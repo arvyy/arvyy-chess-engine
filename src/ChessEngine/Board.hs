@@ -611,15 +611,16 @@ rayToValidMoves color board squares = filterUntilHit squares
   where
     filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
     filterUntilHit positions = 
-        case foldlM foldStep [] positions of
-            Right moves -> moves
-            Left moves -> moves
+        let count = case foldlM foldStep 0 positions of
+                        Right n -> n
+                        Left n -> n
+        in take count positions
 
-    foldStep :: [(Int, Int)] -> (Int, Int) -> Either [(Int, Int)] [(Int, Int)]
-    foldStep moves (x, y)
-      | isPlayerOnSquare board color x y = Left moves
-      | isPlayerOnSquare board (otherPlayer color) x y = Left $ (x, y):moves
-      | otherwise = Right $ (x, y) : moves
+    foldStep :: Int -> (Int, Int) -> Either Int Int
+    foldStep count (x, y)
+      | isPlayerOnSquare board color x y = Left count
+      | isPlayerOnSquare board (otherPlayer color) x y = Left $ count + 1
+      | otherwise = Right $ count + 1
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
 squareUnderThreat board@ChessBoard { pieces = ChessBoardPositions { horses, white, black } } player x y =
