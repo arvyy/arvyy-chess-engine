@@ -265,7 +265,9 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates = do
-      patValue <- if depth == 1 
+      -- we want to prune nodes at depth 1, but we're pruning them when looking at candidate list
+      -- from preceding node, ie, depth 2
+      patValue <- if depth == 2
                   then Just <$> (liftIO $ finalDepthEval cache board)
                   else return Nothing
       let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, patValue = patValue}
@@ -377,7 +379,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                 let isNotInCheck = not $ playerInCheck board
                     doesNotGiveCheck = not $ playerInCheck candidateBoard
                     isNotCapture = isNothing $ getCaptureInfo board candidateMove
-                    futilityBuffer = 300
+                    futilityBuffer = 150
                 in case patValue of
                     Just v -> isNotInCheck && doesNotGiveCheck && isNotCapture && (evalAdd v futilityBuffer) < alpha
                     _ -> False
