@@ -18,7 +18,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Trans.Reader
 import Data.IORef
 import Data.List (intercalate, partition, sortBy)
-import Data.Maybe (isJust, mapMaybe)
+import Data.Maybe (isJust, mapMaybe, isNothing)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Control.Concurrent.Async (race)
 import Data.Foldable (foldlM)
@@ -67,7 +67,9 @@ data CandidatesFold = CandidatesFold
     alpha :: PositionEval,
     beta :: PositionEval,
     siblingIndex :: !Int,
-    nodesParsed :: !Int
+    nodesParsed :: !Int,
+    -- Just only when depth = 1 for purposes of futility pruning
+    patValue :: !(Maybe PositionEval)
   }
 
 type App = ReaderT (IORef EvaluationContext) IO
@@ -263,7 +265,10 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates = do
-      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed}
+      patValue <- if depth == 1 
+                  then Just <$> (liftIO $ finalDepthEval cache board)
+                  else return Nothing
+      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, patValue = patValue}
       result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
       return $ case result of
                 Left value -> value
@@ -273,11 +278,16 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                     else (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
     foldCandidatesStep :: CandidatesFold -> (Move, ChessBoard)-> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
-    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), alpha, beta, siblingIndex, nodesParsed} (candidateMove, candidateBoard)
+    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), alpha, beta, siblingIndex, nodesParsed, patValue } (candidateMove, candidateBoard)
         | alpha >= beta = except $ Left (bestMoveValue, nodesParsed, LowerBound)
-        | tryNullWindow = executeNullWindow tryLmr
-        | tryLmr = executeLmr
-        | otherwise = executeDefault
+        | otherwise =
+            if futilePrune
+            then return candidatesFold { siblingIndex = (siblingIndex + 1)}
+            else if tryNullWindow 
+            then executeNullWindow tryLmr
+            else if tryLmr
+            then executeLmr
+            else executeDefault
 
         where 
             tryNullWindow = siblingIndex > 0 && not (isNullWindow alpha beta)
@@ -361,6 +371,16 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                   executeDefault
                 else
                   return candidatesFold { siblingIndex = (siblingIndex + 1), nodesParsed = newNodesParsed}
+
+            futilePrune :: Bool
+            futilePrune = 
+                let isNotInCheck = not $ playerInCheck board
+                    doesNotGiveCheck = not $ playerInCheck candidateBoard
+                    isNotCapture = isNothing $ getCaptureInfo board candidateMove
+                    futilityBuffer = 300
+                in case patValue of
+                    Just v -> isNotInCheck && doesNotGiveCheck && isNotCapture && (evalAdd v futilityBuffer) < alpha
+                    _ -> False
 
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1

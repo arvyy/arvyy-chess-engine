@@ -9,6 +9,7 @@ Operates through UCI.
 . Iterative deepening;
 . PVS / null-window pruning;
 . Null move pruning;
+. Futility pruning;
 . Bitboards;
 . Piece-square tables valuation;
 . Mobility valuation;
