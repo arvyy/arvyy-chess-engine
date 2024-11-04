@@ -68,8 +68,9 @@ data CandidatesFold = CandidatesFold
     beta :: PositionEval,
     siblingIndex :: !Int,
     nodesParsed :: !Int,
-    -- Just only when depth = 1 for purposes of futility pruning
-    patValue :: !(Maybe PositionEval)
+    -- Just only when depth = 1 or 2 for purposes of futility pruning
+    -- of non capturing moves when alpha is less than this value
+    futilityThreshold :: !(Maybe PositionEval)
   }
 
 type App = ReaderT (IORef EvaluationContext) IO
@@ -265,12 +266,14 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates = do
-      -- we want to prune nodes at depth 1, but we're pruning them when looking at candidate list
-      -- from preceding node, ie, depth 2
-      patValue <- if depth == 2
-                  then Just <$> (liftIO $ finalDepthEval cache board)
+      -- we want to prune nodes at depth 1 and 2, but we're pruning them when looking at candidate list
+      -- from preceding node, ie, depth 2 and 3
+      futilityThreshold <- if depth == 2
+                  then Just . (\eval -> evalAdd eval 150) <$> (liftIO $ finalDepthEval cache board)
+                  else if depth == 3
+                  then Just . (\eval -> evalAdd eval 900) <$> (liftIO $ finalDepthEval cache board)
                   else return Nothing
-      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, patValue = patValue}
+      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityThreshold = futilityThreshold}
       result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
       return $ case result of
                 Left value -> value
@@ -280,7 +283,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                     else (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
     foldCandidatesStep :: CandidatesFold -> (Move, ChessBoard)-> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
-    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), alpha, beta, siblingIndex, nodesParsed, patValue } (candidateMove, candidateBoard)
+    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), alpha, beta, siblingIndex, nodesParsed, futilityThreshold } (candidateMove, candidateBoard)
         | alpha >= beta = except $ Left (bestMoveValue, nodesParsed, LowerBound)
         | otherwise =
             if futilePrune
@@ -379,9 +382,9 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                 let isNotInCheck = not $ playerInCheck board
                     doesNotGiveCheck = not $ playerInCheck candidateBoard
                     isNotCapture = isNothing $ getCaptureInfo board candidateMove
-                    futilityBuffer = 150
-                in case patValue of
-                    Just v -> isNotInCheck && doesNotGiveCheck && isNotCapture && (evalAdd v futilityBuffer) < alpha
+                    isNotPromo = promotion candidateMove == NoPromo
+                in case futilityThreshold of
+                    Just v -> isNotPromo && isNotInCheck && doesNotGiveCheck && isNotCapture && v < alpha
                     _ -> False
 
 isNullWindow :: PositionEval -> PositionEval -> Bool
