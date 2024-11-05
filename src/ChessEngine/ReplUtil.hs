@@ -3,8 +3,8 @@ module ChessEngine.ReplUtil where
 import ChessEngine.Board
 import ChessEngine.HeuristicEvaluator (finalDepthEvalExplained)
 import Control.Monad (forM_)
-import Data.Maybe (isJust, fromJust)
 import Data.Foldable (foldl')
+import Data.Maybe (fromJust, isJust)
 
 heuristicEvalExplainPosition :: String -> IO ()
 heuristicEvalExplainPosition fen = do
@@ -18,10 +18,9 @@ heuristicEvalExplainPosition fen = do
 dividePosition :: String -> Integer -> IO ()
 dividePosition fen depth = do
   let (board, _) = case loadFen fen of
-                        Just v -> v
-                        _ -> error "Invalid fen"
+        Just v -> v
+        _ -> error "Invalid fen"
   printNodes board depth
-  
   where
     printNodes :: ChessBoard -> Integer -> IO ()
     printNodes board depth =
@@ -30,11 +29,10 @@ dividePosition fen depth = do
           candidatesInfo = (\candidate -> (fromJust (moveToString candidate), countNodes (fromJust $ candidateMoveLegal board candidate) (depth - 1))) <$> validCandidates
           totalCount = foldl' (+) 0 (snd <$> candidatesInfo)
           printCandidateInfo (move, count) = putStrLn $ move ++ ": " ++ (show count)
-      in do
+       in do
             forM_ candidatesInfo printCandidateInfo
             putStrLn "========="
             putStrLn $ "Total: " ++ (show totalCount)
-        
 
     countNodes board depth
       | depth == 0 = 1

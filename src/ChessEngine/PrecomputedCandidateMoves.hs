@@ -1,6 +1,6 @@
 module ChessEngine.PrecomputedCandidateMoves
   ( emptyBoardBishopRays,
-    emptyBoardRockRays
+    emptyBoardRockRays,
   )
 where
 

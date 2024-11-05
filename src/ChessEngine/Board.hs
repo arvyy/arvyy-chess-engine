@@ -41,19 +41,19 @@ module ChessEngine.Board
 where
 
 import ChessEngine.PrecomputedCandidateMoves
+import Data.Array.IArray
 import Data.Bits
 import Data.Char
 import Data.Foldable (find, foldl', foldlM)
 import Data.Hashable
 import Data.Int (Int64)
-import Data.Maybe
-import GHC.Generics (Generic)
-import Text.Read (readMaybe)
-import Data.Word (Word64)
-import Data.Array.IArray
-import System.Random.TF (mkTFGen)
-import System.Random (randoms)
 import Data.List (unfoldr)
+import Data.Maybe
+import Data.Word (Word64)
+import GHC.Generics (Generic)
+import System.Random (randoms)
+import System.Random.TF (mkTFGen)
+import Text.Read (readMaybe)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -97,25 +97,25 @@ playerPositionsToList _ _ [] = []
 -}
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types =
-    concatMap getTypeValues types
-    where
-        playerbitmap = if color == White then white else black
+  concatMap getTypeValues types
+  where
+    playerbitmap = if color == White then white else black
 
-        getTypeValues :: ChessPieceType -> [(Int, Int, ChessPiece)]
-        getTypeValues t = 
-          let bitmap = case t of
-                Pawn -> pawns
-                Bishop -> bishops
-                Horse -> horses
-                Rock -> rocks
-                Queen -> queens
-                King -> kings
-           in collectValues t bitmap
+    getTypeValues :: ChessPieceType -> [(Int, Int, ChessPiece)]
+    getTypeValues t =
+      let bitmap = case t of
+            Pawn -> pawns
+            Bishop -> bishops
+            Horse -> horses
+            Rock -> rocks
+            Queen -> queens
+            King -> kings
+       in collectValues t bitmap
 
-        collectValues pieceType bitmap = do
-          let bitmap' = bitmap .&. playerbitmap
-          (x, y) <- bitmapToCoords bitmap'
-          return (x, y, ChessPiece color pieceType)
+    collectValues pieceType bitmap = do
+      let bitmap' = bitmap .&. playerbitmap
+      (x, y) <- bitmapToCoords bitmap'
+      return (x, y, ChessPiece color pieceType)
 
 {-# INLINE playerKingPosition #-}
 playerKingPosition :: ChessBoard -> PlayerColor -> (Int, Int)
@@ -125,13 +125,14 @@ playerKingPosition ChessBoard {pieces = ChessBoardPositions {black, white, kings
 
 bitmapToCoords :: Int64 -> [(Int, Int)]
 bitmapToCoords bitmap =
-    unfoldr unfoldStep bitmap
+  unfoldr unfoldStep bitmap
   where
     unfoldStep bitmap =
-        let index = countTrailingZeros bitmap
-         in if index == 64
+      let index = countTrailingZeros bitmap
+       in if index == 64
             then Nothing
             else Just (bitIndexToCoords index, clearBit bitmap index)
+
 {-
 bitmapToCoords :: Int64 -> [(Int, Int)]
 bitmapToCoords bitmap =
@@ -151,7 +152,7 @@ bitIndexToCoords index =
 
 coordsToBitmap :: [(Int, Int)] -> Int64
 coordsToBitmap coords =
-    foldl' (\bitmap (x, y) -> bitmap .|. (1 `shiftL` (coordsToBitIndex x y))) 0 coords
+  foldl' (\bitmap (x, y) -> bitmap .|. (1 `shiftL` (coordsToBitIndex x y))) 0 coords
 
 {-# INLINE coordsToBitIndex #-}
 coordsToBitIndex :: Int -> Int -> Int
@@ -164,16 +165,18 @@ clearPosition :: Word64 -> ChessBoardPositions -> Int -> Int -> (Word64, ChessBo
 clearPosition hash positions@(ChessBoardPositions black white bishops horses queens kings pawns rocks) x y =
   case pieceOnSquare' positions x y of
     Just piece@(ChessPiece color pieceType) ->
-        let positions = ChessBoardPositions {
-                            black = if color == Black then (clearBit black bitIndex) else black,
-                            white = if color == White then (clearBit white bitIndex) else white,
-                            pawns = if pieceType == Pawn then (clearBit pawns bitIndex) else pawns,
-                            horses = if pieceType == Horse then (clearBit horses bitIndex) else horses,
-                            bishops = if pieceType == Bishop then (clearBit bishops bitIndex) else bishops,
-                            rocks = if pieceType == Rock then (clearBit rocks bitIndex) else rocks,
-                            queens = if pieceType == Queen then (clearBit queens bitIndex) else queens,
-                            kings = if pieceType == King then (clearBit kings bitIndex) else kings }
-        in (hash `xor` zebraHashPiece x y piece, positions)
+      let positions =
+            ChessBoardPositions
+              { black = if color == Black then (clearBit black bitIndex) else black,
+                white = if color == White then (clearBit white bitIndex) else white,
+                pawns = if pieceType == Pawn then (clearBit pawns bitIndex) else pawns,
+                horses = if pieceType == Horse then (clearBit horses bitIndex) else horses,
+                bishops = if pieceType == Bishop then (clearBit bishops bitIndex) else bishops,
+                rocks = if pieceType == Rock then (clearBit rocks bitIndex) else rocks,
+                queens = if pieceType == Queen then (clearBit queens bitIndex) else queens,
+                kings = if pieceType == King then (clearBit kings bitIndex) else kings
+              }
+       in (hash `xor` zebraHashPiece x y piece, positions)
     Nothing -> (hash, positions)
   where
     bitIndex = coordsToBitIndex x y
@@ -182,17 +185,18 @@ clearPosition hash positions@(ChessBoardPositions black white bishops horses que
 setPosition :: Word64 -> ChessBoardPositions -> Int -> Int -> ChessPiece -> (Word64, ChessBoardPositions)
 setPosition hash positions x y piece@(ChessPiece color pieceType) =
   let (hash', (ChessBoardPositions black white bishops horses queens kings pawns rocks)) = clearPosition hash positions x y
-      positions' = ChessBoardPositions
-                            { black = if color == Black then setBit black bitIndex else black,
-                              white = if color == White then setBit white bitIndex else white,
-                              bishops = if pieceType == Bishop then setBit bishops bitIndex else bishops,
-                              horses = if pieceType == Horse then setBit horses bitIndex else horses,
-                              queens = if pieceType == Queen then setBit queens bitIndex else queens,
-                              kings = if pieceType == King then setBit kings bitIndex else kings,
-                              pawns = if pieceType == Pawn then setBit pawns bitIndex else pawns,
-                              rocks = if pieceType == Rock then setBit rocks bitIndex else rocks
-                            }
-  in (hash' `xor` zebraHashPiece x y piece, positions')
+      positions' =
+        ChessBoardPositions
+          { black = if color == Black then setBit black bitIndex else black,
+            white = if color == White then setBit white bitIndex else white,
+            bishops = if pieceType == Bishop then setBit bishops bitIndex else bishops,
+            horses = if pieceType == Horse then setBit horses bitIndex else horses,
+            queens = if pieceType == Queen then setBit queens bitIndex else queens,
+            kings = if pieceType == King then setBit kings bitIndex else kings,
+            pawns = if pieceType == Pawn then setBit pawns bitIndex else pawns,
+            rocks = if pieceType == Rock then setBit rocks bitIndex else rocks
+          }
+   in (hash' `xor` zebraHashPiece x y piece, positions')
   where
     bitIndex = coordsToBitIndex x y
 
@@ -478,18 +482,19 @@ applyMoveUnsafe board move =
             (Black, Rock) -> not (x == 1 && y == 8)
             _ -> True
           && not blackQueenRockTooken
-      hash'' = hash'
-        `xor` (if blackQueenCastle' /= (blackQueenCastle board) then zebraHashQueenCastle Black else 0)
-        `xor` (if blackKingCastle' /=  (blackKingCastle board)  then zebraHashKingCastle Black else 0)
-        `xor` (if whiteQueenCastle' /= (whiteQueenCastle board) then zebraHashQueenCastle White else 0)
-        `xor` (if whiteKingCastle' /=  (whiteKingCastle board)  then zebraHashKingCastle White else 0)
-        `xor` case enPassant board of
-                Just n -> zebraHashEnPeasent n
-                Nothing -> 0
-        `xor` case enPassant' of
-                Just n -> zebraHashEnPeasent n
-                Nothing -> 0
-        `xor` zebraHashBlackTurn
+      hash'' =
+        hash'
+          `xor` (if blackQueenCastle' /= (blackQueenCastle board) then zebraHashQueenCastle Black else 0)
+          `xor` (if blackKingCastle' /= (blackKingCastle board) then zebraHashKingCastle Black else 0)
+          `xor` (if whiteQueenCastle' /= (whiteQueenCastle board) then zebraHashQueenCastle White else 0)
+          `xor` (if whiteKingCastle' /= (whiteKingCastle board) then zebraHashKingCastle White else 0)
+          `xor` case enPassant board of
+            Just n -> zebraHashEnPeasent n
+            Nothing -> 0
+          `xor` case enPassant' of
+            Just n -> zebraHashEnPeasent n
+            Nothing -> 0
+          `xor` zebraHashBlackTurn
       isIrreversible = pieceType == Pawn || isCastleMove || isJust (pieceOnSquare' oldPieces x' y')
       linkedBoard =
         if isIrreversible
@@ -575,14 +580,14 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 -- given board and piece find threatened squares (for the purposes of check, castling, and eval for controlled squares)
 -- ignores own pin status
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
-pieceThreats ChessBoard { pieces = ChessBoardPositions{ white, black }} (x, y, ChessPiece color King) =
+pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, ChessPiece color King) =
   {-# SCC "m_pieceThreats_King" #-}
   let baseHops = emptyBoardKingHops x y
       bitboardMask = complement (if color == White then white else black)
       hops = baseHops .&. bitboardMask
    in bitmapToCoords hops
 pieceThreats board (x, y, ChessPiece color Queen) =
-  {-# SCC "m_pieceThreats_Queen" #-} 
+  {-# SCC "m_pieceThreats_Queen" #-}
   concatMap (\pieceType -> pieceThreats board (x, y, ChessPiece color pieceType)) [Rock, Bishop]
 pieceThreats board (x, y, ChessPiece color Pawn) =
   {-# SCC "m_pieceThreats_Pawn" #-}
@@ -599,7 +604,7 @@ pieceThreats board (x, y, ChessPiece color Rock) =
   {-# SCC "m_pieceThreats_Rock" #-}
   let rays = emptyBoardRockRays x y
    in concatMap (rayToValidMoves color board) rays
-pieceThreats ChessBoard { pieces = ChessBoardPositions { white, black }} (x, y, ChessPiece color Horse) =
+pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, ChessPiece color Horse) =
   {-# SCC "m_pieceThreats_Horse" #-}
   let baseHops = emptyBoardHorseHops x y
       bitboardMask = complement (if color == White then white else black)
@@ -610,11 +615,11 @@ rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
 rayToValidMoves color board squares = filterUntilHit squares
   where
     filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
-    filterUntilHit positions = 
-        let count = case foldlM foldStep 0 positions of
-                        Right n -> n
-                        Left n -> n
-        in take count positions
+    filterUntilHit positions =
+      let count = case foldlM foldStep 0 positions of
+            Right n -> n
+            Left n -> n
+       in take count positions
 
     foldStep :: Int -> (Int, Int) -> Either Int Int
     foldStep count (x, y)
@@ -623,7 +628,7 @@ rayToValidMoves color board squares = filterUntilHit squares
       | otherwise = Right $ count + 1
 
 squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
-squareUnderThreat board@ChessBoard { pieces = ChessBoardPositions { horses, white, black } } player x y =
+squareUnderThreat board@ChessBoard {pieces = ChessBoardPositions {horses, white, black}} player x y =
   threatenedByBishopOrQueen
     || threatenedByRockOrQueen
     || threatenedByHorse
@@ -634,18 +639,17 @@ squareUnderThreat board@ChessBoard { pieces = ChessBoardPositions { horses, whit
     threatenedByHorse =
       let opponentHorses = (if opponentColor == White then white else black) .&. horses
           matchedHorses = opponentHorses .&. (emptyBoardHorseHops x y)
-      in matchedHorses > 0
+       in matchedHorses > 0
 
     threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
     threatenedOnRay threateningTypes ray =
       case foldlM foldStep False ray of
         Right _ -> False
         Left t -> t
-
       where
         foldStep _ (x, y)
-            | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = Left $ color' == opponentColor && elem pieceType' threateningTypes
-            | otherwise = Right False
+          | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = Left $ color' == opponentColor && elem pieceType' threateningTypes
+          | otherwise = Right False
 
     threatenedByBishopOrQueen = any (\ray -> threatenedOnRay [Queen, Bishop] ray) (emptyBoardBishopRays x y)
     threatenedByRockOrQueen = any (\ray -> threatenedOnRay [Queen, Rock] ray) (emptyBoardRockRays x y)
@@ -669,25 +673,24 @@ playerPotentiallyPinned board player =
 
     checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
     checkRayPin moves ownPieceSeen pinnerTypes =
-        case foldlM foldStepper ownPieceSeen moves of
-            Right _ -> False
-            Left v -> v
-
-        where
-            foldStepper ownPieceSeen (x, y) =
-              let ownPiece = isPlayerOnSquare board player x y
-                  opponentPiece = isPlayerOnSquare board opponentColor x y
-               in if not ownPiece && not opponentPiece
-                    then Right ownPieceSeen
+      case foldlM foldStepper ownPieceSeen moves of
+        Right _ -> False
+        Left v -> v
+      where
+        foldStepper ownPieceSeen (x, y) =
+          let ownPiece = isPlayerOnSquare board player x y
+              opponentPiece = isPlayerOnSquare board opponentColor x y
+           in if not ownPiece && not opponentPiece
+                then Right ownPieceSeen
+                else
+                  if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
+                    Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
+                    _ -> False
+                    then Left True
                     else
-                      if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
-                        Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
-                        _ -> False
-                        then Left True
-                        else
-                          if not ownPieceSeen && ownPiece
-                            then Right True
-                            else Left False
+                      if not ownPieceSeen && ownPiece
+                        then Right True
+                        else Left False
 
 {-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> Bool
@@ -951,7 +954,7 @@ loadFen input = do
             prev = Nothing,
             zebraHash = 0
           }
-  let hashedBoard = board { zebraHash = initialZebraHash board }
+  let hashedBoard = board {zebraHash = initialZebraHash board}
   return (hashedBoard, input'')
 
 boardToFen :: ChessBoard -> String
@@ -991,22 +994,22 @@ boardToFen board =
        in if (length str) == 0 then "-" else str
 
     enPeasent = case enPassant board of
-                    Just n -> fromJust $ squareReferenceToString (n, if turn board == Black then 3 else 6)
-                    Nothing -> "-"
+      Just n -> fromJust $ squareReferenceToString (n, if turn board == Black then 3 else 6)
+      Nothing -> "-"
 
 zebraHashKeys :: Array Int Word64
 zebraHashKeys =
-    let gen = mkTFGen 69420
-    in listArray (0, 780) (randoms gen)
+  let gen = mkTFGen 69420
+   in listArray (0, 780) (randoms gen)
 
 zebraHashPiece :: Int -> Int -> ChessPiece -> Word64
 zebraHashPiece x y (ChessPiece color pieceType) =
-    let colorOffset = (fromEnum color) * 64 * 6
-        pieceOffset = (fromEnum pieceType) * 64
-        colOffset = (y - 1) * 8
-        rowOffset = x - 1
-        index = colorOffset + pieceOffset + colOffset + rowOffset
-    in zebraHashKeys ! index
+  let colorOffset = (fromEnum color) * 64 * 6
+      pieceOffset = (fromEnum pieceType) * 64
+      colOffset = (y - 1) * 8
+      rowOffset = x - 1
+      index = colorOffset + pieceOffset + colOffset + rowOffset
+   in zebraHashKeys ! index
 
 zebraHashQueenCastle :: PlayerColor -> Word64
 zebraHashQueenCastle White = zebraHashKeys ! (64 * 12 + 0)
@@ -1023,21 +1026,21 @@ zebraHashEnPeasent :: Int -> Word64
 zebraHashEnPeasent file = zebraHashKeys ! (64 * 12 + 4 + file)
 
 initialZebraHash :: ChessBoard -> Word64
-initialZebraHash board@ChessBoard { turn, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle, enPassant } =
-    initialZebraHash' turn (boardPositions board) whiteKingCastle whiteQueenCastle blackKingCastle blackQueenCastle enPassant
+initialZebraHash board@ChessBoard {turn, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle, enPassant} =
+  initialZebraHash' turn (boardPositions board) whiteKingCastle whiteQueenCastle blackKingCastle blackQueenCastle enPassant
 
 initialZebraHash' :: PlayerColor -> [(Int, Int, ChessPiece)] -> Bool -> Bool -> Bool -> Bool -> Maybe Int -> Word64
 initialZebraHash' turn pieces wkc wqc bkc bqc enPeasent =
-    let piecesHashes = foldl' (\h (x, y, piece) -> h `xor` zebraHashPiece x y piece) 0 pieces
-        wkcH = if wkc then zebraHashKingCastle White else 0
-        wqcH = if wqc then zebraHashQueenCastle White else 0
-        bkcH = if bkc then zebraHashKingCastle Black else 0
-        bqcH = if bqc then zebraHashQueenCastle Black else 0
-        turnH = if turn == Black then zebraHashBlackTurn else 0
-        enPH = case enPeasent of
-                Just file -> zebraHashEnPeasent file
-                _ -> 0
-    in piecesHashes `xor` wkcH `xor` wqcH `xor` bkcH `xor` bqcH `xor` turnH `xor` enPH
+  let piecesHashes = foldl' (\h (x, y, piece) -> h `xor` zebraHashPiece x y piece) 0 pieces
+      wkcH = if wkc then zebraHashKingCastle White else 0
+      wqcH = if wqc then zebraHashQueenCastle White else 0
+      bkcH = if bkc then zebraHashKingCastle Black else 0
+      bqcH = if bqc then zebraHashQueenCastle Black else 0
+      turnH = if turn == Black then zebraHashBlackTurn else 0
+      enPH = case enPeasent of
+        Just file -> zebraHashEnPeasent file
+        _ -> 0
+   in piecesHashes `xor` wkcH `xor` wqcH `xor` bkcH `xor` bqcH `xor` turnH `xor` enPH
 
 horseHops :: Array Int Int64
 horseHops =
@@ -1049,15 +1052,17 @@ horseHops =
 
 computeHorseHops :: Int -> Int -> Int64
 computeHorseHops x y =
-    let hops = [ (x + 1, y + 2)
-               , (x + 1, y - 2)
-               , (x - 1, y + 2)
-               , (x - 1, y - 2)
-               , (x + 2, y + 1)
-               , (x + 2, y - 1)
-               , (x - 2, y + 1)
-               , (x - 2, y - 1)]
-    in coordsToBitmap $ filter (\(x', y') -> inBounds x' y') hops
+  let hops =
+        [ (x + 1, y + 2),
+          (x + 1, y - 2),
+          (x - 1, y + 2),
+          (x - 1, y - 2),
+          (x + 2, y + 1),
+          (x + 2, y - 1),
+          (x - 2, y + 1),
+          (x - 2, y - 1)
+        ]
+   in coordsToBitmap $ filter (\(x', y') -> inBounds x' y') hops
 
 emptyBoardHorseHops :: Int -> Int -> Int64
 emptyBoardHorseHops x y = horseHops ! coordsToBitIndex x y
@@ -1072,8 +1077,8 @@ kingHops =
 
 computeKingHops :: Int -> Int -> Int64
 computeKingHops x y =
-    let hops = [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
-    in coordsToBitmap $ filter (\(x', y') -> inBounds x' y' && not (x == x' && y == y')) hops
+  let hops = [(x', y') | x' <- [x - 1 .. x + 1], y' <- [y - 1 .. y + 1]]
+   in coordsToBitmap $ filter (\(x', y') -> inBounds x' y' && not (x == x' && y == y')) hops
 
 emptyBoardKingHops :: Int -> Int -> Int64
 emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y

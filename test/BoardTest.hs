@@ -45,19 +45,19 @@ prop_changeturn =
       )
       $ candidateMoves board
 
-prop_fenexport = 
-  \board -> 
+prop_fenexport =
+  \board ->
     let Just (recreatedBoard, _) = loadFen $ boardToFen board
      in (pieces board) === (pieces recreatedBoard)
-        .&&. (turn board) === (turn recreatedBoard)
-        .&&. (enPassant board) === (enPassant recreatedBoard)
-        .&&. (whiteKingCastle board) === (whiteKingCastle recreatedBoard)
-        .&&. (whiteQueenCastle board) === (whiteQueenCastle recreatedBoard)
-        .&&. (blackKingCastle board) === (blackKingCastle recreatedBoard)
-        .&&. (blackQueenCastle board) === (blackQueenCastle recreatedBoard)
+          .&&. (turn board) === (turn recreatedBoard)
+          .&&. (enPassant board) === (enPassant recreatedBoard)
+          .&&. (whiteKingCastle board) === (whiteKingCastle recreatedBoard)
+          .&&. (whiteQueenCastle board) === (whiteQueenCastle recreatedBoard)
+          .&&. (blackKingCastle board) === (blackKingCastle recreatedBoard)
+          .&&. (blackQueenCastle board) === (blackQueenCastle recreatedBoard)
 
 prop_zebrahashconsistent =
-  \board -> 
+  \board ->
     let Just (recreatedBoard, _) = loadFen $ boardToFen board
      in (zebraHash board) === (zebraHash recreatedBoard)
 
@@ -80,18 +80,15 @@ unitTests =
         parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
         parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (createMove 5 2 5 4 NoPromo))
         parseUCICommand "go depth 6" @?= Just (Go emptyGoProps {depth = Just 6}),
-
       testCase "3fold detection" $
         let Just (Position board1) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6 a3b1 a6b8"
             Just (Position board2) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6"
          in do
               is3foldRepetition board1 @?= True
               is3foldRepetition board2 @?= False,
-
       testCase "prev not held after irreversible move" $
         let Just (Position (ChessBoard {prev})) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6 e2e4"
          in (isJust prev) @?= False,
-
       testCase "Candidates moves" $ do
         -- test en pessant works
         candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (createMove 5 5 4 6 NoPromo) @?= True
@@ -101,7 +98,6 @@ unitTests =
         candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (createMove 4 7 3 8 PromoQueen) @?= True
         -- regression test, check if king doesn't try to castle after having rook captured
         candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo) @?= False,
-
       testCase "Precomputed rays" $ do
         elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True
         elem [(3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2)] (emptyBoardRockRays 2 2) @?= True

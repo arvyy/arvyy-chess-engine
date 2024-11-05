@@ -5,8 +5,8 @@ module ChessEngine.HeuristicEvaluator (finalDepthEval, finalDepthEvalExplained) 
 import ChessEngine.Board
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
-import Data.Foldable
 import Data.Bits ((.&.))
+import Data.Foldable
 
 evaluatePawns :: ChessCache -> ChessBoard -> IO Int
 evaluatePawns cache board = do
@@ -98,14 +98,14 @@ finalDepthEval' infoConsumer cache board = do
     addScore :: (Monoid m) => (Int, m) -> (Int, m) -> (Int, m)
     addScore (f1, m1) (f2, m2) = (f1 + f2, m1 <> m2)
 
-{-
-    addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
-    addScores [a, b] = addScore a b
-    addScores (x : rest) = addScore x (addScores rest)
--}
+    {-
+        addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
+        addScores [a, b] = addScore a b
+        addScores (x : rest) = addScore x (addScores rest)
+    -}
     addScores :: (Monoid m) => [(Int, m)] -> (Int, m)
     addScores scores =
-        foldl' addScore (0, mempty) scores
+      foldl' addScore (0, mempty) scores
 
     explain :: (Monoid m) => (String -> m) -> Int -> String -> (Int, m)
     explain infoConsumer score text = (score, infoConsumer (text ++ ": " ++ (show score)))
@@ -142,7 +142,7 @@ scorePieceThreats board piece =
         Queen -> (5, 40, 10, 150)
         _ -> (0, 0, 0, 0)
    in (maxBonus1 * (min mobilityScore maxMobilityScore1)) `div` maxMobilityScore1
-      + (maxBonus2 * (min mobilityScore maxMobilityScore2)) `div` maxMobilityScore2
+        + (maxBonus2 * (min mobilityScore maxMobilityScore2)) `div` maxMobilityScore2
 
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
@@ -162,10 +162,10 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
 scoreKingSafety :: ChessBoard -> PlayerColor -> Int
 scoreKingSafety board player =
   (floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier)
-  + scoreKingOnEdgeInEndgame
-  + scoreKingCloseToOpponentKingInWinningEndGame
+    + scoreKingOnEdgeInEndgame
+    + scoreKingCloseToOpponentKingInWinningEndGame
   where
-    opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player) 
+    opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player)
     myMaterial = fromIntegral $ quickMaterialCount board player
 
     (king_x, king_y) = playerKingPosition board player
@@ -207,26 +207,24 @@ scoreKingSafety board player =
     -- so that winning side knows to push it towards the edge and not blunder 50-move draw
     scoreKingOnEdgeInEndgame :: Int
     scoreKingOnEdgeInEndgame =
-        let losingEndgame = myMaterial == 0
-            distanceToEdgeX = (min king_x (9 - king_x)) - 1
-            distanceToEdgeY = (min king_y (9 - king_y)) - 1
-            distanceToEdge = min distanceToEdgeX distanceToEdgeY
-            penalty = (3 - distanceToEdge) * (-100)
-        in if losingEndgame then penalty else 0
+      let losingEndgame = myMaterial == 0
+          distanceToEdgeX = (min king_x (9 - king_x)) - 1
+          distanceToEdgeY = (min king_y (9 - king_y)) - 1
+          distanceToEdge = min distanceToEdgeX distanceToEdgeY
+          penalty = (3 - distanceToEdge) * (-100)
+       in if losingEndgame then penalty else 0
 
     -- when this side has material and other side only king
     -- score it better for beign near opponent king (to prevent 50-move draw of K+R vs K where king is required for mate)
     scoreKingCloseToOpponentKingInWinningEndGame :: Int
     scoreKingCloseToOpponentKingInWinningEndGame =
-        let ChessBoard { pieces = ChessBoardPositions { white = white, black = black, pawns = pawns }} = board
-            opponentHasPawns = ((if player == White then black else white) .&. pawns) > 0
-            distance = max (abs $ king_x - opponentKingX) (abs $ king_y - opponentKingY)
-            bonus = 100 - (distance * (-10))
-        in if myMaterial > 0 && opponentMaterial == 0 && (not opponentHasPawns)
-           then bonus
-           else 0
-        
-        
+      let ChessBoard {pieces = ChessBoardPositions {white = white, black = black, pawns = pawns}} = board
+          opponentHasPawns = ((if player == White then black else white) .&. pawns) > 0
+          distance = max (abs $ king_x - opponentKingX) (abs $ king_y - opponentKingY)
+          bonus = 100 - (distance * (-10))
+       in if myMaterial > 0 && opponentMaterial == 0 && (not opponentHasPawns)
+            then bonus
+            else 0
 
     safetyMultiplier :: Float
     safetyMultiplier =
