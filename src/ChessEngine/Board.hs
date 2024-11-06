@@ -25,6 +25,7 @@ module ChessEngine.Board
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
     quickMaterialCount,
+    quickPawnCount,
     is3foldRepetition,
     initialBoard,
     applyMove,
@@ -179,6 +180,14 @@ quickMaterialCount board player =
         + (popCount (horses p .&. playerBits)) * 3
         + (popCount (rocks p .&. playerBits)) * 5
         + (popCount (queens p .&. playerBits)) * 9
+
+-- count pawns with standard evaluation
+{-# INLINE quickPawnCount #-}
+quickPawnCount :: ChessBoard -> PlayerColor -> Int
+quickPawnCount board player =
+  let p = pieces board
+      playerBits = if player == White then (white p) else (black p)
+   in (popCount (pawns p .&. playerBits))
 
 {-# INLINE pieceOnSquare' #-}
 pieceOnSquare' :: ChessBoardPositions -> Int -> Int -> Maybe ChessPiece

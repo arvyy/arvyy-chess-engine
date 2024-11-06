@@ -111,8 +111,8 @@ finalDepthEval' infoConsumer cache board = do
     scorePiece :: (Int, Int, ChessPiece) -> Int
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
@@ -151,6 +151,57 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
         _ -> 0
       score = squareRating * maxBonus
    in floor score
+
+-- penalize stupid horse being stuck at the opponent's edge and controlled by pawns
+scoreTrappedHorse :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scoreTrappedHorse board (8, 8, ChessPiece White Horse)
+    | hasPieceOnSquare board 6 7 (ChessPiece Black Pawn) || hasPieceOnSquare board 8 7 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (1, 8, ChessPiece White Horse)
+    | hasPieceOnSquare board 3 7 (ChessPiece Black Pawn) || hasPieceOnSquare board 1 7 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (8, 1, ChessPiece Black Horse)
+    | hasPieceOnSquare board 6 2 (ChessPiece White Pawn) || hasPieceOnSquare board 8 2 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (1, 1, ChessPiece Black Horse)
+    | hasPieceOnSquare board 3 2 (ChessPiece White Pawn) || hasPieceOnSquare board 1 2 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+
+scoreTrappedHorse board (8, 7, ChessPiece White Horse)
+    | hasPieceOnSquare board 8 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 7 7 (ChessPiece Black Pawn) = -150
+    | hasPieceOnSquare board 6 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 7 7 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (1, 7, ChessPiece White Horse)
+    | hasPieceOnSquare board 1 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 2 7 (ChessPiece Black Pawn) = -150
+    | hasPieceOnSquare board 3 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 2 7 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (8, 2, ChessPiece Black Horse)
+    | hasPieceOnSquare board 8 3 (ChessPiece White Pawn) && hasPieceOnSquare board 7 2 (ChessPiece White Pawn) = -150
+    | hasPieceOnSquare board 6 3 (ChessPiece White Pawn) && hasPieceOnSquare board 7 2 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+scoreTrappedHorse board (1, 2, ChessPiece Black Horse)
+    | hasPieceOnSquare board 1 3 (ChessPiece White Pawn) && hasPieceOnSquare board 2 2 (ChessPiece White Pawn) = -150
+    | hasPieceOnSquare board 3 3 (ChessPiece White Pawn) && hasPieceOnSquare board 2 2 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+
+
+scoreTrappedHorse _ _ = 0
+
+-- penalize stupid bishop being stuck at the opponent's edge and controlled by pawns
+scoreTrappedBishop :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scoreTrappedBishop board (8, 7, ChessPiece White Bishop)
+    | hasPieceOnSquare board 6 7 (ChessPiece Black Pawn) && hasPieceOnSquare board 7 6 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedBishop board (1, 7, ChessPiece White Bishop)
+    | hasPieceOnSquare board 3 7 (ChessPiece Black Pawn) && hasPieceOnSquare board 2 6 (ChessPiece Black Pawn) = -150
+    | otherwise = 0
+scoreTrappedBishop board (8, 2, ChessPiece Black Bishop)
+    | hasPieceOnSquare board 6 2 (ChessPiece White Pawn) && hasPieceOnSquare board 7 3 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+scoreTrappedBishop board (1, 2, ChessPiece Black Bishop)
+    | hasPieceOnSquare board 3 2 (ChessPiece White Pawn) && hasPieceOnSquare board 2 3 (ChessPiece White Pawn) = -150
+    | otherwise = 0
+scoreTrappedBishop _ _ = 0
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
@@ -213,8 +264,7 @@ scoreKingSafety board player =
     -- score it better for beign near opponent king (to prevent 50-move draw of K+R vs K where king is required for mate)
     scoreKingCloseToOpponentKingInWinningEndGame :: Int
     scoreKingCloseToOpponentKingInWinningEndGame =
-      let ChessBoard {pieces = ChessBoardPositions {white = white, black = black, pawns = pawns}} = board
-          opponentHasPawns = ((if player == White then black else white) .&. pawns) > 0
+      let opponentHasPawns = quickPawnCount board (otherPlayer player)  > 0
           distance = max (abs $ king_x - opponentKingX) (abs $ king_y - opponentKingY)
           bonus = 100 - (distance * (-10))
        in if myMaterial > 0 && opponentMaterial == 0 && (not opponentHasPawns)
