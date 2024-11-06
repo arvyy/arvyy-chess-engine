@@ -74,27 +74,6 @@ positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessP
 positionsToList positions types =
   concatMap (\color -> playerPositionsToList positions color types) [White, Black]
 
--- returns list of positions for given player
-{-# INLINE playerPositionsToList #-}
-{-
-playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
-playerPositionsToList positions@ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color (t : rest) =
-  let bitmap = case t of
-        Pawn -> pawns
-        Bishop -> bishops
-        Horse -> horses
-        Rock -> rocks
-        Queen -> queens
-        King -> kings
-   in collectValues t bitmap ++ playerPositionsToList positions color rest
-  where
-    playerbitmap = if color == White then white else black
-    collectValues pieceType bitmap = do
-      let bitmap' = bitmap .&. playerbitmap
-      (x, y) <- bitmapToCoords bitmap'
-      return (x, y, ChessPiece color pieceType)
-playerPositionsToList _ _ [] = []
--}
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types =
   concatMap getTypeValues types
@@ -132,16 +111,6 @@ bitmapToCoords bitmap =
        in if index == 64
             then Nothing
             else Just (bitIndexToCoords index, clearBit bitmap index)
-
-{-
-bitmapToCoords :: Int64 -> [(Int, Int)]
-bitmapToCoords bitmap =
-  if index == 64
-    then []
-    else bitIndexToCoords index : bitmapToCoords (clearBit bitmap index)
-  where
-    index = countTrailingZeros bitmap
--}
 
 {-# INLINE bitIndexToCoords #-}
 bitIndexToCoords :: Int -> (Int, Int)
