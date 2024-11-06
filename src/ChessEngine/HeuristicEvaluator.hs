@@ -5,7 +5,6 @@ module ChessEngine.HeuristicEvaluator (finalDepthEval, finalDepthEvalExplained) 
 import ChessEngine.Board
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
-import Data.Bits ((.&.))
 import Data.Foldable
 
 evaluatePawns :: ChessCache -> ChessBoard -> IO Int
@@ -113,7 +112,7 @@ finalDepthEval' infoConsumer cache board = do
     scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece + scoreRockOnFile board piece) * pieceMul player
     scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
 scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Int
@@ -166,7 +165,6 @@ scoreTrappedHorse board (8, 1, ChessPiece Black Horse)
 scoreTrappedHorse board (1, 1, ChessPiece Black Horse)
     | hasPieceOnSquare board 3 2 (ChessPiece White Pawn) || hasPieceOnSquare board 1 2 (ChessPiece White Pawn) = -150
     | otherwise = 0
-
 scoreTrappedHorse board (8, 7, ChessPiece White Horse)
     | hasPieceOnSquare board 8 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 7 7 (ChessPiece Black Pawn) = -150
     | hasPieceOnSquare board 6 6 (ChessPiece Black Pawn) && hasPieceOnSquare board 7 7 (ChessPiece Black Pawn) = -150
@@ -183,8 +181,6 @@ scoreTrappedHorse board (1, 2, ChessPiece Black Horse)
     | hasPieceOnSquare board 1 3 (ChessPiece White Pawn) && hasPieceOnSquare board 2 2 (ChessPiece White Pawn) = -150
     | hasPieceOnSquare board 3 3 (ChessPiece White Pawn) && hasPieceOnSquare board 2 2 (ChessPiece White Pawn) = -150
     | otherwise = 0
-
-
 scoreTrappedHorse _ _ = 0
 
 -- penalize stupid bishop being stuck at the opponent's edge and controlled by pawns
@@ -202,6 +198,14 @@ scoreTrappedBishop board (1, 2, ChessPiece Black Bishop)
     | hasPieceOnSquare board 3 2 (ChessPiece White Pawn) && hasPieceOnSquare board 2 3 (ChessPiece White Pawn) = -150
     | otherwise = 0
 scoreTrappedBishop _ _ = 0
+
+scoreRockOnFile :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scoreRockOnFile board (_, y, ChessPiece color Rock) =
+    case fileState board y color of
+        ClosedFile -> 0
+        SemiOpenFile -> 5
+        OpenFile -> 10
+scoreRockOnFile _ _ = 0
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety

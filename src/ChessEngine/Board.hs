@@ -38,6 +38,8 @@ module ChessEngine.Board
     loadFen,
     pieceThreats,
     boardToFen,
+    fileState,
+    FileState (..)
   )
 where
 
@@ -1060,3 +1062,25 @@ computeKingHops x y =
 
 emptyBoardKingHops :: Int -> Int -> Int64
 emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y
+
+data FileState = OpenFile | SemiOpenFile | ClosedFile
+
+-- array mapping file (1..8) to bitboard for all pawn squares on it
+fileBitsArray :: Array Int Int64
+fileBitsArray =
+    let content = (\y -> (y, fileBits y)) <$> [1..8]
+    in array (1, 8) content
+    where
+        fileBits y = foldl' (\bits x -> setBit bits (coordsToBitIndex x y)) 0 [2..7]
+
+fileState :: ChessBoard -> Int -> PlayerColor -> FileState
+fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} y color =
+    let fileBits = fileBitsArray ! y 
+        whiteBlock = (white .&. pawns .&. fileBits) > 0
+        blackBlock = (black .&. pawns .&. fileBits) > 0
+        (myBlock, opponentBlock) = if color == White then (whiteBlock, blackBlock) else (blackBlock, whiteBlock)
+    in if myBlock
+       then ClosedFile
+       else if opponentBlock
+       then SemiOpenFile
+       else OpenFile
