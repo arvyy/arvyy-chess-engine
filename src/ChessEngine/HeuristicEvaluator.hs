@@ -89,7 +89,9 @@ finalDepthEval' infoConsumer cache board = do
   let myKingScore = explain infoConsumer myKingScoreRaw "My king safety score"
   let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board)) * (-1)
   let opponentKingScore = explain infoConsumer opponentKingScoreRaw "Opponent king safety score"
-  let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore]) "Total result"
+  let myConnectedRockScore = explain infoConsumer (scoreConnectedRocks board (turn board)) "My connected rock bonus"
+  let opponentConnectedRockScore = explain infoConsumer ((-1) * scoreConnectedRocks board (otherPlayer (turn board))) "Opponent connected rock bonus"
+  let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore, myConnectedRockScore, opponentConnectedRockScore]) "Total result"
   return (PositionEval evalScore, explanation)
   where
     pieceMul color = if color == turn board then 1 else -1
@@ -206,6 +208,27 @@ scoreRockOnFile board (_, y, ChessPiece color Rock) =
         SemiOpenFile -> 5
         OpenFile -> 10
 scoreRockOnFile _ _ = 0
+
+scoreConnectedRocks :: ChessBoard -> PlayerColor -> Int
+scoreConnectedRocks board color =
+    let rocks = findPiecePositions board (ChessPiece color Rock)
+    in case rocks of
+        [(x1, y1), (x2, y2)] 
+            | (x1 == x2 && connectedVertically x1 y1 y2)
+            || (y1 == y2 && connectedHorizontally y1 x1 x2) -> 10
+        _ -> 0
+    where
+        connectedVertically x y1 y2 =
+            let y1' = (min y1 y2) + 1
+                y2' = (max y1 y2) - 1
+                points = (\y -> (x, y)) <$> [y1'..y2']
+            in rangeEmpty points
+        connectedHorizontally y x1 x2 =
+            let x1' = (min x1 x2) + 1
+                x2' = (max x1 x2) - 1
+                points = (\x -> (x, y)) <$> [x1'..x2']
+            in rangeEmpty points
+        rangeEmpty points = all (\(x, y) -> squareEmpty board x y) points
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety

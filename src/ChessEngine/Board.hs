@@ -18,10 +18,12 @@ module ChessEngine.Board
     ChessBoard (..),
     ChessBoardPositions (..),
     boardPositions,
+    findPiecePositions,
     boardNonPawnPositions,
     boardPawnPositions,
     hasPieceOnSquare,
     pieceOnSquare,
+    squareEmpty,
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
     quickMaterialCount,
@@ -369,6 +371,11 @@ isPlayerOnSquare ChessBoard {pieces = ChessBoardPositions {black}} Black x y =
   let bitIndex = coordsToBitIndex x y
    in testBit black bitIndex
 
+{-# INLINE squareEmpty #-}
+squareEmpty :: ChessBoard -> Int -> Int -> Bool
+squareEmpty board x y = 
+    not (isPlayerOnSquare board White x y || isPlayerOnSquare board Black x y)
+
 {-# INLINE pieceOnSquare #-}
 pieceOnSquare :: ChessBoard -> Int -> Int -> Maybe ChessPiece
 pieceOnSquare board = pieceOnSquare' (pieces board)
@@ -388,6 +395,7 @@ hasPieceOnSquare ChessBoard {pieces} x y (ChessPiece color pieceType) =
       Bishop -> bishops pieces
     bitIndex = coordsToBitIndex x y
 
+{-# INLINE findPiecePositions #-}
 findPiecePositions :: ChessBoard -> ChessPiece -> [(Int, Int)]
 findPiecePositions ChessBoard {pieces} (ChessPiece color pieceType) =
   bitmapToCoords $ playerBitboard .&. pieceBitboard
