@@ -782,7 +782,7 @@ pseudoLegalCandidateMoves board =
 candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
-      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin) || isKingMove || isEnPassant) && playerInCheck' board' player
+      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin) || isKingMove) && playerInCheck' board' player
    in if not inCheck
         then return board'
         else Nothing
@@ -791,16 +791,19 @@ candidateMoveLegal board candidate =
     wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition board player
-    movePotentiallyBreakingPin =
-      fromRow candidate == king_y
-        || fromCol candidate == king_x
-        || abs (fromRow candidate - king_y) == abs (fromCol candidate - king_x)
-    isKingMove =
-      fromRow candidate == king_y && fromCol candidate == king_x
+    squarePotentiallyUnderPin x y =
+        y == king_y 
+        || x == king_x
+        || abs (y - king_y) == abs (x - king_x)
     -- en pessent move might clear a pin held by opponent's pawn
     isEnPassant = case pieceOnSquare board (fromCol candidate) (fromRow candidate) of
       Just (ChessPiece _ Pawn) -> (fromCol candidate) /= (toCol candidate)
       _ -> False
+    movePotentiallyBreakingPin = 
+        squarePotentiallyUnderPin (fromCol candidate) (fromRow candidate)
+        || (isEnPassant && (squarePotentiallyUnderPin (toCol candidate) (fromRow candidate)))
+    isKingMove =
+      fromRow candidate == king_y && fromCol candidate == king_x
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
