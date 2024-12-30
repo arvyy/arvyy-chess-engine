@@ -373,7 +373,7 @@ isPlayerOnSquare ChessBoard {pieces = ChessBoardPositions {black}} Black x y =
 
 {-# INLINE squareEmpty #-}
 squareEmpty :: ChessBoard -> Int -> Int -> Bool
-squareEmpty board x y = 
+squareEmpty board x y =
     not (isPlayerOnSquare board White x y || isPlayerOnSquare board Black x y)
 
 {-# INLINE pieceOnSquare #-}
@@ -534,25 +534,30 @@ applyMoveUnsafe board move =
        in setPosition hash' p1 x' y' newMovedPiece
 
 -- return if given board is in 3fold repetition state
+-- we call it 3fold, but only a single repetition is being checked for to save time
 is3foldRepetition :: ChessBoard -> Bool
-is3foldRepetition board = seenCount >= 2
+is3foldRepetition board = seenRepetition
   where
     isSamePos board1 board2 =
-      ((pieces board1) == (pieces board2))
-        && ((blackQueenCastle board1) == (blackQueenCastle board2))
-        && ((blackKingCastle board1) == (blackKingCastle board2))
-        && ((whiteQueenCastle board1) == (whiteQueenCastle board2))
-        && ((whiteKingCastle board1) == (whiteKingCastle board2))
-        && ((enPassant board1) == (enPassant board2))
+        (pieces board1 == pieces board2)
+        && (blackQueenCastle board1 == blackQueenCastle board2)
+        && (blackKingCastle board1 == blackKingCastle board2)
+        && (whiteQueenCastle board1 == whiteQueenCastle board2)
+        && (whiteKingCastle board1 == whiteKingCastle board2)
+        && (enPassant board1 == enPassant board2)
 
-    unfoldBoards b@ChessBoard {prev} =
+    {-# INLINE unfoldrBoards #-}
+    unfoldrBoards :: Maybe ChessBoard -> Maybe (ChessBoard, Maybe ChessBoard)
+    unfoldrBoards (Just b@ChessBoard { prev }) =
       case prev of
-        Just (ChessBoard {prev = Just b'}) -> b : unfoldBoards b'
-        _ -> [b]
+        Just (ChessBoard {prev = Just b'}) -> Just (b, Just b')
+        _ -> Just (b, Nothing)
+    unfoldrBoards Nothing = Nothing
 
-    otherBoards = drop 1 $ unfoldBoards board
+    {-# INLINE otherBoards #-}
+    otherBoards = drop 1 $ unfoldr unfoldrBoards $ Just board
 
-    seenCount = length $ filter (isSamePos board) otherBoards
+    seenRepetition = any (isSamePos board) otherBoards
 
 inBounds :: Int -> Int -> Bool
 inBounds x y = x >= 1 && x <= 8 && y >= 1 && y <= 8
@@ -692,42 +697,36 @@ playerInCheck' board player =
 
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 pawnCandidateMoves board x y player =
-  let (dir, inStartingPos, inEnPassantPos, promotesOnMove) =
+  let (dir, inStartingPos, inEnPassantPos, promotesOnMove, opponent) =
         if player == White
-          then (1, y == 2, y == 5, y == 7)
-          else (-1, y == 7, y == 4, y == 2)
+          then (1, y == 2, y == 5, y == 7, Black)
+          else (-1, y == 7, y == 4, y == 2, White)
       y' = y + dir
-      aheadIsClear =
-        inBounds x (y + dir) && case pieceOnSquare board x y' of
-          Just _ -> False
-          Nothing -> True
+      aheadIsClear = squareEmpty board x y'
       normalCaptures = do
         x' <- [x - 1, x + 1]
-        x' <- ([x' | inBounds x' y'])
-        x' <- case pieceOnSquare board x' y' of
-          Just (ChessPiece color _) -> ([x' | color /= player])
-          _ -> []
+        x' <- [x' | x' >= 1 && x' <= 8 && isPlayerOnSquare board opponent x' y']
         if promotesOnMove
           then do
             createMove x y x' y' <$> [PromoQueen, PromoRock, PromoBishop, PromoHorse]
           else return $ createMove x y x' y' NoPromo
-      enPassantCaptures = do
-        x' <- [x - 1, x + 1]
-        x' <- ([x' | inBounds x' y'])
-        x' <- ([x' | inEnPassantPos])
-        x' <- case enPassant board of
-          Just col -> ([x' | col == x'])
-          _ -> []
-        return $ createMove x y x' y' NoPromo
+      enPassantCaptures = 
+        case enPassant board of
+            Just col ->
+                if inEnPassantPos
+                then if col == x - 1 
+                     then return $ createMove x y (x - 1) y' NoPromo
+                     else if col == x + 1
+                          then return $ createMove x y (x + 1) y' NoPromo
+                          else []
+                else []
+            _ -> []
       doubleDipMove =
-        let doubleAheadIsClear =
-              inBounds x (y + 2 * dir) && case pieceOnSquare board x (y + 2 * dir) of
-                Just _ -> False
-                Nothing -> True
+        let doubleAheadIsClear = squareEmpty board x (y + 2 * dir)
             canDoubleDip = inStartingPos && aheadIsClear && doubleAheadIsClear
          in ([createMove x y x (y + 2 * dir) NoPromo | canDoubleDip])
       singleMove
-        | aheadIsClear && not promotesOnMove = [createMove x y x (y + dir) NoPromo]
+        | aheadIsClear && not promotesOnMove = [createMove x y x y' NoPromo]
         | aheadIsClear && promotesOnMove = map (\promotion -> createMove x y x (y + dir) promotion) [PromoQueen, PromoRock, PromoHorse, PromoBishop]
         | otherwise = []
    in normalCaptures ++ enPassantCaptures ++ doubleDipMove ++ singleMove
@@ -736,9 +735,7 @@ canCastleKingSide :: ChessBoard -> PlayerColor -> Bool
 canCastleKingSide board color =
   let hasRights = if color == White then whiteKingCastle board else blackKingCastle board
       y = if color == White then 1 else 8
-      hasEmptySpaces = case (pieceOnSquare board 6 y, pieceOnSquare board 7 y) of
-        (Nothing, Nothing) -> True
-        _ -> False
+      hasEmptySpaces = squareEmpty board 6 y && squareEmpty board 7 y
       travelsThroughCheck = case filter (\x' -> squareUnderThreat board color x' y) [5, 6, 7] of
         [] -> False
         _ -> True
@@ -748,9 +745,7 @@ canCastleQueenSide :: ChessBoard -> PlayerColor -> Bool
 canCastleQueenSide board color =
   let hasRights = if color == White then whiteQueenCastle board else blackQueenCastle board
       y = if color == White then 1 else 8
-      hasEmptySpaces = case (pieceOnSquare board 2 y, pieceOnSquare board 3 y, pieceOnSquare board 4 y) of
-        (Nothing, Nothing, Nothing) -> True
-        _ -> False
+      hasEmptySpaces = squareEmpty board 2 y && squareEmpty board 3 y && squareEmpty board 4 y
       travelsThroughCheck = case filter (\x' -> squareUnderThreat board color x' y) [3, 4, 5] of
         [] -> False
         _ -> True
@@ -1083,7 +1078,7 @@ fileBitsArray =
 
 fileState :: ChessBoard -> Int -> PlayerColor -> FileState
 fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} y color =
-    let fileBits = fileBitsArray ! y 
+    let fileBits = fileBitsArray ! y
         whiteBlock = (white .&. pawns .&. fileBits) > 0
         blackBlock = (black .&. pawns .&. fileBits) > 0
         (myBlock, opponentBlock) = if color == White then (whiteBlock, blackBlock) else (blackBlock, whiteBlock)

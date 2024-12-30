@@ -15,7 +15,7 @@ sprt-quick:
 	rm -f ENGINE2
 	(PWD=$$(pwd) ; cd ${ENGINE1_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE1)
 	(PWD=$$(pwd) ; cd ${ENGINE2_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE2)
-	${FAST_CHESS_EXE} -log file=sprt.log level=trace -pgnout file=games.pgn -engine cmd=ENGINE1 name=ENGINE1 -engine cmd=ENGINE2 name=ENGINE2 -each tc=8+0.5 -rounds 10 -repeat -concurrency 1 -randomseed -openings file=8moves_v3.pgn format=pgn -sprt elo0=0 elo1=10 alpha=0.05 beta=0.05
+	${FAST_CHESS_EXE} -log file=sprt.log level=trace -pgnout file=games.pgn -engine cmd=ENGINE1 name=ENGINE1 -engine cmd=ENGINE2 name=ENGINE2 -each tc=8+0.5 -rounds 15000 -repeat -concurrency 1 -randomseed -openings file=8moves_v3.pgn format=pgn -sprt elo0=0 elo1=10 alpha=0.05 beta=0.05
 
 sprt:
 	rm -f ENGINE1
