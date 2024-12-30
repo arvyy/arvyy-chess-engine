@@ -534,9 +534,8 @@ applyMoveUnsafe board move =
        in setPosition hash' p1 x' y' newMovedPiece
 
 -- return if given board is in 3fold repetition state
--- we call it 3fold, but only a single repetition is being checked for to save time
 is3foldRepetition :: ChessBoard -> Bool
-is3foldRepetition board = seenRepetition
+is3foldRepetition board = repetitionCount >= 2
   where
     isSamePos board1 board2 =
         (pieces board1 == pieces board2)
@@ -557,7 +556,19 @@ is3foldRepetition board = seenRepetition
     {-# INLINE otherBoards #-}
     otherBoards = drop 1 $ unfoldr unfoldrBoards $ Just board
 
-    seenRepetition = any (isSamePos board) otherBoards
+    repetitionCount :: Integer
+    repetitionCount = 
+        let count' = foldlM (\count b -> if (isSamePos board b)
+                            then if count == 1
+                                 then Left 2
+                                 else Right $ count + 1
+                            else Right count)
+                            0
+                            otherBoards
+        in case count' of
+            Left n -> n
+            Right n -> n
+
 
 inBounds :: Int -> Int -> Bool
 inBounds x y = x >= 1 && x <= 8 && y >= 1 && y <= 8
