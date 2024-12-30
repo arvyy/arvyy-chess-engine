@@ -41,7 +41,9 @@ module ChessEngine.Board
     pieceThreats,
     boardToFen,
     fileState,
-    FileState (..)
+    FileState (..),
+    isPassedPawn,
+    isBackwardPawn
   )
 where
 
@@ -1082,17 +1084,21 @@ emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y
 
 data FileState = OpenFile | SemiOpenFile | ClosedFile
 
--- array mapping file (1..8) to bitboard for all pawn squares on it
-fileBitsArray :: Array Int Int64
+-- array mapping (file 1..8), (fromRow 2..7), (toRow 2..7) to bitboard for pawn detection
+fileBitsArray :: Array (Int, Int, Int) Int64
 fileBitsArray =
-    let content = (\y -> (y, fileBits y)) <$> [1..8]
-    in array (1, 8) content
+    let content = do
+            x <- [1..8]
+            y1 <- [2..7]
+            y2 <- [2..7]
+            return ((x, y1, y2), fileBits x (min y1 y2) (max y1 y2))
+    in array ((1, 2, 2), (8, 7, 7)) content
     where
-        fileBits y = foldl' (\bits x -> setBit bits (coordsToBitIndex x y)) 0 [2..7]
+        fileBits x y1 y2 = foldl' (\bits y -> setBit bits (coordsToBitIndex x y)) 0 [y1..y2]
 
 fileState :: ChessBoard -> Int -> PlayerColor -> FileState
-fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} y color =
-    let fileBits = fileBitsArray ! y
+fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} x color =
+    let fileBits = fileBitsArray ! (x, 2, 7)
         whiteBlock = (white .&. pawns .&. fileBits) > 0
         blackBlock = (black .&. pawns .&. fileBits) > 0
         (myBlock, opponentBlock) = if color == White then (whiteBlock, blackBlock) else (blackBlock, whiteBlock)
@@ -1101,3 +1107,39 @@ fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} y c
        else if opponentBlock
        then SemiOpenFile
        else OpenFile
+
+isPassedPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
+isPassedPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y White =
+    let linesToCheck = do
+            x' <- [x'' | x'' <- [x - 1 .. x + 1], x'' >= 1 && x'' <= 8]
+            return $ fileBitsArray ! (x', y + 1, 7)
+        opponentPawns = black .&. pawns
+        lineIsClear bits = opponentPawns .&. bits == 0
+        onLastRow = y == 7
+    in if onLastRow 
+       then True
+       else all lineIsClear linesToCheck
+isPassedPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y Black =
+    let linesToCheck = do
+            x' <- [x'' | x'' <- [x - 1 .. x + 1], x'' >= 1 && x'' <= 8]
+            return $ fileBitsArray ! (x', 2, y - 1)
+        opponentPawns = white .&. pawns
+        lineIsClear bits = opponentPawns .&. bits == 0
+        onLastRow = y == 2
+    in if onLastRow 
+       then True
+       else all lineIsClear linesToCheck
+
+isBackwardPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
+isBackwardPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y White =
+    let onLastRow = y == 7
+        lineToCheck = fileBitsArray ! (x, y + 1, 7)
+    in if onLastRow
+       then False
+       else (white .&. pawns .&. lineToCheck) /= 0
+isBackwardPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y Black =
+    let onLastRow = y == 2
+        lineToCheck = fileBitsArray ! (x, 2, y - 1)
+    in if onLastRow
+       then False
+       else (black .&. pawns .&. lineToCheck) /= 0

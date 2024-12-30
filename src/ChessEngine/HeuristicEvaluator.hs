@@ -18,42 +18,19 @@ evaluatePawns cache board = do
       putPawnEvaluation cache key pawnEvaluation'
       return pawnEvaluation'
   where
-    doEvaluatePawns :: [(Int, Int, ChessPiece)] -> Int
-    doEvaluatePawns ((x, y, ChessPiece color _) : rest) =
+    
+    doEvaluatePawns = foldl' (\score pawn -> score + doEvaluatePawn pawn) 0
+
+    doEvaluatePawn (x, y, ChessPiece color _) =
       let score =
             100
-              + (if isPassedPawn x y color then 10 else 0)
-              + (if isBackwardDoubledPawn x y color then (-20) else 0)
+              + (if isPassedPawn board x y color then 10 else 0)
+              + (if isBackwardPawn board x y color then (-20) else 0)
               + (if isProtectedPawn x y color then 15 else 0)
               + (floor $ 100 * piecePositionBonus x y (ChessPiece color Pawn))
               + 0
           multiplier = if color == White then 1 else -1
-       in (score * multiplier) + doEvaluatePawns rest
-    doEvaluatePawns [] = 0
-
-    isPassedPawn x y White = null $ do
-      x' <- [x - 1 .. x + 1]
-      y' <- [y + 1 .. 7]
-      case pieceOnSquare board x' y' of
-        Just (ChessPiece Black Pawn) -> [False]
-        _ -> []
-    isPassedPawn x y Black = null $ do
-      x' <- [x - 1 .. x + 1]
-      y' <- [2 .. y - 1]
-      case pieceOnSquare board x' y' of
-        Just (ChessPiece White Pawn) -> [False]
-        _ -> []
-
-    isBackwardDoubledPawn x y White = not $ null $ do
-      y' <- [y + 1 .. 7]
-      case pieceOnSquare board x y' of
-        Just (ChessPiece White Pawn) -> [False]
-        _ -> []
-    isBackwardDoubledPawn x y Black = not $ null $ do
-      y' <- [2 .. y - 1]
-      case pieceOnSquare board x y' of
-        Just (ChessPiece Black Pawn) -> [False]
-        _ -> []
+       in (score * multiplier)
 
     isProtectedPawn x y White = not $ null $ do
       x' <- [x - 1, x + 1]
@@ -202,8 +179,8 @@ scoreTrappedBishop board (1, 2, ChessPiece Black Bishop)
 scoreTrappedBishop _ _ = 0
 
 scoreRockOnFile :: ChessBoard -> (Int, Int, ChessPiece) -> Int
-scoreRockOnFile board (_, y, ChessPiece color Rock) =
-    case fileState board y color of
+scoreRockOnFile board (x, _, ChessPiece color Rock) =
+    case fileState board x color of
         ClosedFile -> 0
         SemiOpenFile -> 5
         OpenFile -> 10
