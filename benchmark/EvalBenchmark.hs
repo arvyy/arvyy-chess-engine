@@ -12,7 +12,7 @@ import Debug.Trace
 evalPosition :: String -> Int -> IO PositionEval
 evalPosition fen depth = do
   let (board, _) = fromJust $ loadFen fen
-  resultRef <- newIORef EvaluateResult {nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False, latestEvaluationInfo = []}
+  resultRef <- newIORef EvaluationContext { workerThreadCount = 1, nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False, latestEvaluationInfo = []}
   result <- evaluate resultRef board depth
   return $ evaluation result
 
@@ -33,11 +33,11 @@ main =
   defaultMain
     [ bgroup
         "position eval"
-        [ bench "Initial pos 5 depth" $ whnfIO (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 5),
-          bench "Midgame pos 5 depth" $ whnfIO (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11" 5)
+        [ bench "Initial pos 7 depth" $ whnfIO (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 7),
+          bench "Midgame pos 7 depth" $ whnfIO (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11" 7)
         ],
       bgroup
         "move generator"
-        [ bench "Initial pos 5 deep" $ whnf (countNodes "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 5
+        [ bench "Initial pos 4 deep" $ whnf (countNodes "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1") 4
         ]
     ]
