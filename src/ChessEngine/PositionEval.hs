@@ -269,10 +269,10 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
       -- we want to prune nodes at depth 1 and 2, but we're pruning them when looking at candidate list
       -- from preceding node, ie, depth 2 and 3
       futilityThreshold <-
-        if depth == 2
+        if depth == 1
           then Just . (\eval -> evalAdd eval 150) <$> (liftIO $ finalDepthEval cache board)
           else
-            if depth == 3
+            if depth == 2
               then Just . (\eval -> evalAdd eval 900) <$> (liftIO $ finalDepthEval cache board)
               else return Nothing
       let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityThreshold = futilityThreshold}
@@ -285,7 +285,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             else (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
     foldCandidatesStep :: CandidatesFold -> (Move, ChessBoard) -> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
-    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue@(bestEval, _), alpha, beta, siblingIndex, nodesParsed, futilityThreshold} (candidateMove, candidateBoard)
+    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue, alpha, beta, siblingIndex, nodesParsed, futilityThreshold} (candidateMove, candidateBoard)
       | alpha >= beta = except $ Left (bestMoveValue, nodesParsed, LowerBound)
       | otherwise =
           if futilePrune
@@ -294,7 +294,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
               if tryNullWindow
                 then executeNullWindow tryLmr
                 else
-                  if tryLmr
+                  if (tryLmr && isNullWindow alpha beta)
                     then executeLmr
                     else executeDefault
       where
@@ -305,7 +305,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
               params' =
                 params
-                  { depth = (depth - (if tryLmr then 3 else 1)),
+                  { depth = (depth - (if tryLmr then lmrReduction else 0) - 1),
                     ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
@@ -338,7 +338,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           evaluated' <- lift $ evaluate' cache params'
           let (moveValue@(eval, moveLine), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
           newBestMoveValue <-
-            if (siblingIndex == 0 || eval > bestEval)
+            if (siblingIndex == 0 || eval > alpha)
               then do
                 when (depth == maxDepth) $ do
                   let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moveLine
@@ -353,19 +353,20 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                 return moveValue
               else return bestMoveValue
           let (alpha', raisedAlpha') =
-                let v = max eval bestEval
+                let v = max eval alpha
                  in if (v > alpha)
                       then (v, True)
                       else (alpha, raisedAlpha)
           return candidatesFold {raisedAlpha = raisedAlpha', bestMoveValue = newBestMoveValue, alpha = alpha', siblingIndex = (siblingIndex + 1), nodesParsed = newNodesParsed}
 
-        tryLmr = siblingIndex > 1 && depth > 2
+        tryLmr = siblingIndex > 2 && depth > 3
+        lmrReduction = if depth < 6 then 1 else (depth `div` 3)
 
         executeLmr :: ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
         executeLmr = do
           let params' =
                 params
-                  { depth = (depth - 3), -- subtract 2 to lower depth search in fringe node
+                  { depth = (depth - lmrReduction - 1),
                     ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
@@ -374,7 +375,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                   }
           evaluated' <- lift $ evaluate' cache params'
           let (moveValue@(eval, _), newNodesParsed) = case evaluated' of ((v, moves), nodes) -> ((negateEval v, candidateMove : moves), nodes)
-          if eval > bestEval
+          if eval > alpha
             then -- if found better move, re-evaluate with proper depth
               executeDefault
             else return candidatesFold {siblingIndex = (siblingIndex + 1), nodesParsed = newNodesParsed}
