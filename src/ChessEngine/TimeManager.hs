@@ -7,8 +7,8 @@ import ChessEngine.Board (PlayerColor (..))
 
 computeDeadline :: PlayerColor -> Int -> Int -> Int -> Maybe Int -> Maybe Int -> Int
 computeDeadline player fullMoves whiteTime blackTime whiteInc blackInc =
-  -- allocate 1/20 of remaining time
-  -- with a minimum of 0.5sec
+  -- allocate 1/10 of remaining time
+  -- with a minimum of 0.05sec
   let myTime =
         if player == White
           then whiteTime

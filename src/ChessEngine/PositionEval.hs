@@ -116,8 +116,7 @@ sortCandidates ::  ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply threadIndex candidates =
   do
     (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves candidates
-    let sortCapturesBySEE = ply == 0 -- expensive, only use on first move
-    let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board sortCapturesBySEE otherMoves
+    let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
     (killerMoves, otherMoves'') <- partitionKillerMoves otherMoves'
     return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
   where
@@ -133,25 +132,28 @@ sortCandidates cache board ply threadIndex candidates =
       killers <- getKillerMoves cache (ply, threadIndex)
       return $ partition (\m -> elem m killers) moves
 
-partitionAndSortCaptureMoves ::  ChessBoard -> Bool -> [Move] -> ([Move], [Move], [Move])
-partitionAndSortCaptureMoves board useSEE moves =
+partitionAndSortCaptureMoves ::  ChessBoard ->  [Move] -> ([Move], [Move], [Move])
+partitionAndSortCaptureMoves board moves =
   {-# SCC "m_partitionAndSortCaptureMoves" #-}
   let augmentedMoves = augmentWithCaptureInfo <$> moves
       (captureMoves, otherMoves) = partition (\(_, capture) -> isJust capture) augmentedMoves
-      (goodCaptures, badCaptures) = partition (\(move, Just n) -> if useSEE then staticExchangeEvalWinning board move else n >= 0) captureMoves
+      (goodCaptures, badCaptures) = partition (\(_, Just (sse, _)) -> sse >= 0) captureMoves
       removeCaptureInfo (move, _) = move
-      captureMoveComparator (_, Just v1) (_, Just v2) = compare v1 v2
+      captureMoveComparator (_, Just (_, captureDiff1)) (_, Just (_, captureDiff2)) = compare captureDiff1 captureDiff2
       goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
       badCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) badCaptures)
       otherMoves' = removeCaptureInfo <$> otherMoves
    in (goodCaptures', badCaptures', otherMoves')
   where
-    augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
+    -- if it's a capture, second element is Just (sse score, mva-llv score)
+    augmentWithCaptureInfo :: Move -> (Move, Maybe (Int, Int))
     augmentWithCaptureInfo move =
-      let diff = do
+      let score = do
             (capturingType, capturedType) <- getCaptureInfo board move
-            return $ captureScore capturedType - captureScore capturingType
-       in (move, diff)
+            let sseScore = staticExchangeEvalWinning board move
+            let captureDiffScore = captureScore capturedType - captureScore capturingType
+            return (sseScore, captureDiffScore)
+       in (move, score)
 
 captureScore :: ChessPieceType -> Int
 captureScore Pawn = 100
@@ -161,10 +163,9 @@ captureScore Rock = 500
 captureScore Queen = 900
 captureScore King = 9999
 
-staticExchangeEvalWinning ::  ChessBoard -> Move -> Bool
+staticExchangeEvalWinning ::  ChessBoard -> Move -> Int
 staticExchangeEvalWinning board move =
-  let settledScore = scoreUnderAttack (fromCol move) (fromRow move) board - see (applyMoveUnsafe board move)
-  in settledScore >= 0
+  scoreUnderAttack (fromCol move) (fromRow move) board - see (applyMoveUnsafe board move)
 
   where
     x = toCol move
@@ -215,11 +216,11 @@ horizonEval cache board alpha beta =
         case pieceOnSquare board (toCol move) (toRow move) of
             Just (ChessPiece _ pieceType) -> 
                 evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha
-                    && staticExchangeEvalWinning board move
+                    && staticExchangeEvalWinning board move >= 0
             _ -> False
 
     sortMoves moves =
-      let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board False moves
+      let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
 
 foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
