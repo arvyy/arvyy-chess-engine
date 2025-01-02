@@ -24,6 +24,7 @@ module ChessEngine.Board
     hasPieceOnSquare,
     pieceOnSquare,
     squareEmpty,
+    squareThreatenedBy,
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
     quickMaterialCount,
@@ -61,6 +62,8 @@ import GHC.Generics (Generic)
 import System.Random (randoms)
 import System.Random.TF (mkTFGen)
 import Text.Read (readMaybe)
+import Control.Applicative
+import GHC.Stack (HasCallStack)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -131,7 +134,7 @@ coordsToBitmap coords =
   foldl' (\bitmap (x, y) -> bitmap .|. (1 `shiftL` (coordsToBitIndex x y))) 0 coords
 
 {-# INLINE coordsToBitIndex #-}
-coordsToBitIndex :: Int -> Int -> Int
+coordsToBitIndex ::  Int -> Int -> Int
 coordsToBitIndex x y =
   let value = (y - 1) * 8 + x - 1
    in if value > 63 then error ("Coordinate out of bounds: " ++ show (x, y)) else value
@@ -413,10 +416,10 @@ findPiecePositions ChessBoard {pieces} (ChessPiece color pieceType) =
 
 -- applies move blindly without validation for checks or piece movement rules
 -- partial function if reference position is empty
-applyMoveUnsafe :: ChessBoard -> Move -> ChessBoard
+applyMoveUnsafe ::  ChessBoard -> Move -> ChessBoard
 applyMoveUnsafe board move =
   let ChessPiece player pieceType = case pieceOnSquare board x y of
-        Nothing -> error $ "Unsafe move tried to move unexisting piece. Square: " ++ show (x, y)
+        Nothing -> error $ "Unsafe move tried to move unexisting piece; board: " ++ boardToFen board ++ " Square: " ++ show (x, y)
         Just f -> f
       hash = zebraHash board
       fullMoves' = (fullMoves board) + (if (turn board) == Black then 1 else 0)
@@ -633,41 +636,59 @@ rayToValidMoves color board squares = filterUntilHit squares
       | isPlayerOnSquare board (otherPlayer color) x y = Left $ count + 1
       | otherwise = Right $ count + 1
 
-squareUnderThreat :: ChessBoard -> PlayerColor -> Int -> Int -> Bool
-squareUnderThreat board@ChessBoard {pieces = ChessBoardPositions {horses, white, black}} player x y =
-  threatenedByBishopOrQueen
-    || threatenedByRockOrQueen
-    || threatenedByHorse
-    || threatenedByPawn
-    || threatenedByKing
+-- returns least valuable piece (so this function can be used in SEE) which threatens given square
+squareThreatenedBy :: ChessBoard -> PlayerColor -> Int -> Int -> Maybe (Int, Int, ChessPiece)
+squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings, white, black}} player x y =
+  threatenedByPawn 
+      <|> threatenedByHorse
+      <|> threatenedByBishop
+      <|> threatenedByRock
+      <|> threatenedByQueen
+      <|> threatenedByKing
+
   where
     opponentColor = if player == White then Black else White
+
     threatenedByHorse =
       let opponentHorses = (if opponentColor == White then white else black) .&. horses
-          matchedHorses = opponentHorses .&. (emptyBoardHorseHops x y)
-       in matchedHorses > 0
+          matchedHorses = opponentHorses .&. emptyBoardHorseHops x y
+          horsesCoords = bitmapToCoords matchedHorses
+       in case horsesCoords of
+            (x, y):_ -> Just (x, y, ChessPiece opponentColor Horse)
+            _ -> Nothing
 
-    threatenedOnRay :: [ChessPieceType] -> [(Int, Int)] -> Bool
-    threatenedOnRay threateningTypes ray =
-      case foldlM foldStep False ray of
-        Right _ -> False
+    threatenedOnRay :: ChessPieceType -> [(Int, Int)] -> Maybe (Int, Int, ChessPiece)
+    threatenedOnRay threateningType ray =
+      case foldlM foldStep () ray of
+        Right _ -> Nothing
         Left t -> t
       where
         foldStep _ (x, y)
-          | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = Left $ color' == opponentColor && elem pieceType' threateningTypes
-          | otherwise = Right False
+          | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = 
+            if color' == opponentColor && pieceType' == threateningType
+            then Left $ Just (x, y, ChessPiece opponentColor threateningType)
+            else Left Nothing
+          | otherwise = Right ()
 
-    threatenedByBishopOrQueen = any (\ray -> threatenedOnRay [Queen, Bishop] ray) (emptyBoardBishopRays x y)
-    threatenedByRockOrQueen = any (\ray -> threatenedOnRay [Queen, Rock] ray) (emptyBoardRockRays x y)
+    threatenedByBishop = foldl' (<|>) Nothing $ threatenedOnRay Bishop <$> emptyBoardBishopRays x y
+    threatenedByRock = foldl' (<|>) Nothing $ threatenedOnRay Rock <$> emptyBoardRockRays x y
+    threatenedByQueen = foldl' (<|>) Nothing $ threatenedOnRay Queen <$> emptyBoardBishopRays x y ++ emptyBoardRockRays x y
 
     threatenedByPawn =
       let y' = if player == White then y + 1 else y - 1
           pawnExists x' = inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Pawn)
-       in pawnExists (x - 1) || pawnExists (x + 1)
+          maybePawn x' = if pawnExists x' then Just (x', y', ChessPiece opponentColor Pawn) else Nothing
+       in maybePawn (x - 1) <|> maybePawn (x + 1)
 
+    -- we can't just use `playerKingPosition` because a king might not exist
+    -- on the board in case this is called during SEE eval
     threatenedByKing =
-      let (x', y') = playerKingPosition board opponentColor
-       in abs (x - x') <= 1 && abs (y - y') <= 1
+      let opponentKings = (if opponentColor == White then white else black) .&. kings
+          matchedKings = opponentKings .&. emptyBoardKingHops x y
+          kingsCoords = bitmapToCoords matchedKings
+       in case kingsCoords of
+            (x, y):_ -> Just (x, y, ChessPiece opponentColor King)
+            _ -> Nothing
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
@@ -706,7 +727,7 @@ playerInCheck board = playerInCheck' board (turn board)
 playerInCheck' :: ChessBoard -> PlayerColor -> Bool
 playerInCheck' board player =
   let (x, y) = playerKingPosition board player
-   in squareUnderThreat board player x y
+   in isJust $ squareThreatenedBy board player x y
 
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 pawnCandidateMoves board x y player =
@@ -749,7 +770,7 @@ canCastleKingSide board color =
   let hasRights = if color == White then whiteKingCastle board else blackKingCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 6 y && squareEmpty board 7 y
-      travelsThroughCheck = case filter (\x' -> squareUnderThreat board color x' y) [5, 6, 7] of
+      travelsThroughCheck = case filter (\x' -> isJust $ squareThreatenedBy board color x' y) [5, 6, 7] of
         [] -> False
         _ -> True
    in hasRights && hasEmptySpaces && not travelsThroughCheck
@@ -759,7 +780,7 @@ canCastleQueenSide board color =
   let hasRights = if color == White then whiteQueenCastle board else blackQueenCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 2 y && squareEmpty board 3 y && squareEmpty board 4 y
-      travelsThroughCheck = case filter (\x' -> squareUnderThreat board color x' y) [3, 4, 5] of
+      travelsThroughCheck = case filter (\x' -> isJust $ squareThreatenedBy board color x' y) [3, 4, 5] of
         [] -> False
         _ -> True
    in hasRights && hasEmptySpaces && not travelsThroughCheck

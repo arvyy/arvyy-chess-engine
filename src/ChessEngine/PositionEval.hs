@@ -24,6 +24,7 @@ import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe)
+import GHC.Stack (HasCallStack)
 
 type BestMove = (PositionEval, [Move])
 
@@ -111,11 +112,12 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
                 else doSearch
         Nothing -> doSearch
 
-sortCandidates :: ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
+sortCandidates ::  ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply threadIndex candidates =
   do
     (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves candidates
-    let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
+    let sortCapturesBySEE = ply == 0 -- expensive, only use on first move
+    let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board sortCapturesBySEE otherMoves
     (killerMoves, otherMoves'') <- partitionKillerMoves otherMoves'
     return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
   where
@@ -131,12 +133,12 @@ sortCandidates cache board ply threadIndex candidates =
       killers <- getKillerMoves cache (ply, threadIndex)
       return $ partition (\m -> elem m killers) moves
 
-partitionAndSortCaptureMoves :: ChessBoard -> [Move] -> ([Move], [Move], [Move])
-partitionAndSortCaptureMoves board moves =
+partitionAndSortCaptureMoves ::  ChessBoard -> Bool -> [Move] -> ([Move], [Move], [Move])
+partitionAndSortCaptureMoves board useSEE moves =
   {-# SCC "m_partitionAndSortCaptureMoves" #-}
   let augmentedMoves = augmentWithCaptureInfo <$> moves
       (captureMoves, otherMoves) = partition (\(_, capture) -> isJust capture) augmentedMoves
-      (goodCaptures, badCaptures) = partition (\(_, Just n) -> n >= 0) captureMoves
+      (goodCaptures, badCaptures) = partition (\(move, Just n) -> if useSEE then staticExchangeEvalWinning board move else n >= 0) captureMoves
       removeCaptureInfo (move, _) = move
       captureMoveComparator (_, Just v1) (_, Just v2) = compare v1 v2
       goodCaptures' = removeCaptureInfo <$> (sortBy (flip captureMoveComparator) goodCaptures)
@@ -144,14 +146,6 @@ partitionAndSortCaptureMoves board moves =
       otherMoves' = removeCaptureInfo <$> otherMoves
    in (goodCaptures', badCaptures', otherMoves')
   where
-    captureScore :: ChessPieceType -> Int
-    captureScore Pawn = 100
-    captureScore Horse = 300
-    captureScore Bishop = 300
-    captureScore Rock = 500
-    captureScore Queen = 900
-    captureScore King = 9999
-
     augmentWithCaptureInfo :: Move -> (Move, Maybe Int)
     augmentWithCaptureInfo move =
       let diff = do
@@ -159,7 +153,41 @@ partitionAndSortCaptureMoves board moves =
             return $ captureScore capturedType - captureScore capturingType
        in (move, diff)
 
-horizonEval :: ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
+captureScore :: ChessPieceType -> Int
+captureScore Pawn = 100
+captureScore Horse = 300
+captureScore Bishop = 300
+captureScore Rock = 500
+captureScore Queen = 900
+captureScore King = 9999
+
+staticExchangeEvalWinning ::  ChessBoard -> Move -> Bool
+staticExchangeEvalWinning board move =
+  let settledScore = scoreUnderAttack (fromCol move) (fromRow move) board - see (applyMoveUnsafe board move)
+  in settledScore >= 0
+
+  where
+    x = toCol move
+    y = toRow move
+    scoreUnderAttack attackerX attackerY board = case pieceOnSquare board x y of
+                                Just (ChessPiece _ pieceType) -> captureScore pieceType
+                                -- when no piece is found and attacker is a pawn, assume it's first capture and it's an en pessant
+                                -- otherwise raise sanity error
+                                Nothing -> case pieceOnSquare board attackerX attackerY of
+                                                Just (ChessPiece _ Pawn) -> captureScore Pawn
+                                                _ -> error $ "SEE attempted in invalid position; board: " ++ (boardToFen board) ++ "; position: " ++ (show (x, y))
+    see ::  ChessBoard -> Int
+    see board = case squareThreatenedBy board (otherPlayer (turn board)) x y of
+                    Just (x', y', ChessPiece _ pieceType) ->
+                        let captureMove = if pieceType == Pawn && (y == 1 || y == 8)
+                                          then createMove x' y' x y PromoQueen
+                                          else createMove x' y' x y NoPromo
+                            newBoard = applyMoveUnsafe board captureMove
+                            capturedValue = scoreUnderAttack x' y' board
+                        in max 0 (capturedValue - see newBoard)
+                    Nothing -> 0
+
+horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
 horizonEval cache board alpha beta =
   {-# SCC "m_horizonEval" #-}
   if playerInCheck board
@@ -180,21 +208,18 @@ horizonEval cache board alpha beta =
           else foldHorizonEval cache board capturingMoves alpha' beta
   where
     -- examine only captures when not in check
-    -- apply "delta pruning", only consider captures
-    -- where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
+    -- apply "delta pruning", only consider captures where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
+    -- apply SEE, only consider winning exchanges
     deltaBuffer = 200
-    examineCaptureMove :: PositionEval -> Move -> Bool
-    examineCaptureMove pat move =
-      case pieceOnSquare board (toCol move) (toRow move) of
-        Just (ChessPiece _ Pawn) -> evalAdd pat (100 + deltaBuffer) > alpha
-        Just (ChessPiece _ Bishop) -> evalAdd pat (300 + deltaBuffer) > alpha
-        Just (ChessPiece _ Horse) -> evalAdd pat (300 + deltaBuffer) > alpha
-        Just (ChessPiece _ Rock) -> evalAdd pat (500 + deltaBuffer) > alpha
-        Just (ChessPiece _ Queen) -> evalAdd pat (900 + deltaBuffer) > alpha
-        _ -> False
+    examineCaptureMove pat move = 
+        case pieceOnSquare board (toCol move) (toRow move) of
+            Just (ChessPiece _ pieceType) -> 
+                evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha
+                    && staticExchangeEvalWinning board move
+            _ -> False
 
     sortMoves moves =
-      let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
+      let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board False moves
        in goodCaptures ++ badCaptures ++ other
 
 foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
