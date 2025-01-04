@@ -639,7 +639,7 @@ rayToValidMoves color board squares = filterUntilHit squares
 
 -- returns least valuable piece (so this function can be used in SEE) which threatens given square
 squareThreatenedBy :: ChessBoard -> PlayerColor -> Int -> Int -> Maybe (Int, Int, ChessPiece)
-squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings, white, black}} player x y =
+squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings, bishops, rocks, queens, white, black}} player x y =
   threatenedByPawn 
       <|> threatenedByHorse
       <|> threatenedByBishop
@@ -649,8 +649,9 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
 
   where
     opponentColor = if player == White then Black else White
+    opponentBits = if opponentColor == White then white else black
 
-    threatenedByHorse =
+    threatenedByHorse = {-# SCC "m_threatenedByHorse" #-}
       let opponentHorses = (if opponentColor == White then white else black) .&. horses
           matchedHorses = opponentHorses .&. emptyBoardHorseHops x y
           horsesCoords = bitmapToCoords matchedHorses
@@ -659,7 +660,7 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
             _ -> Nothing
 
     threatenedOnRay :: ChessPieceType -> [(Int, Int)] -> Maybe (Int, Int, ChessPiece)
-    threatenedOnRay threateningType ray =
+    threatenedOnRay threateningType ray =  {-# SCC "m_threatenedOnRay" #-}
       case foldlM foldStep () ray of
         Right _ -> Nothing
         Left t -> t
@@ -671,11 +672,25 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
             else Left Nothing
           | otherwise = Right ()
 
-    threatenedByBishop = foldl' (<|>) Nothing $ threatenedOnRay Bishop <$> emptyBoardBishopRays x y
-    threatenedByRock = foldl' (<|>) Nothing $ threatenedOnRay Rock <$> emptyBoardRockRays x y
-    threatenedByQueen = foldl' (<|>) Nothing $ threatenedOnRay Queen <$> emptyBoardBishopRays x y ++ emptyBoardRockRays x y
+    threatenedByBishop = {-# SCC "m_threatenedByBishop" #-} 
+        let potentialBits = opponentBits .&. bishops .&. emptyBoardBishopHops x y
+        in if potentialBits == 0
+           then Nothing
+           else foldl' (<|>) Nothing $ threatenedOnRay Bishop <$> emptyBoardBishopRays x y
 
-    threatenedByPawn =
+    threatenedByRock = {-# SCC "m_threatenedByRock" #-} 
+        let potentialBits = opponentBits .&. rocks .&. emptyBoardRockHops x y
+        in if potentialBits == 0
+           then Nothing
+           else foldl' (<|>) Nothing $ threatenedOnRay Rock <$> emptyBoardRockRays x y
+
+    threatenedByQueen = {-# SCC "m_threatenedByQueen" #-} 
+        let potentialBits = opponentBits .&. queens .&. (emptyBoardBishopHops x y .|. emptyBoardRockHops x y)
+        in if potentialBits == 0
+           then Nothing
+           else foldl' (<|>) Nothing $ threatenedOnRay Queen <$> emptyBoardBishopRays x y ++ emptyBoardRockRays x y
+
+    threatenedByPawn = {-# SCC "m_threatenedByPawn" #-}
       let y' = if player == White then y + 1 else y - 1
           pawnExists x' = inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Pawn)
           maybePawn x' = if pawnExists x' then Just (x', y', ChessPiece opponentColor Pawn) else Nothing
@@ -683,7 +698,7 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
 
     -- we can't just use `playerKingPosition` because a king might not exist
     -- on the board in case this is called during SEE eval
-    threatenedByKing =
+    threatenedByKing = {-# SCC "m_threatenedByKing" #-}
       let opponentKings = (if opponentColor == White then white else black) .&. kings
           matchedKings = opponentKings .&. emptyBoardKingHops x y
           kingsCoords = bitmapToCoords matchedKings
@@ -1109,6 +1124,28 @@ computeKingHops x y =
 
 emptyBoardKingHops :: Int -> Int -> Int64
 emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y
+
+bishopBitmaps :: Array Int Int64
+bishopBitmaps =
+    let content = do
+            x <- [1..8]
+            y <- [1..8]
+            let bits = coordsToBitmap $ (concatMap id $ emptyBoardBishopRays x y)
+            return (coordsToBitIndex x y, bits)
+    in array (0, 63) content
+
+emptyBoardBishopHops x y = bishopBitmaps ! coordsToBitIndex x y
+
+rockBitmaps :: Array Int Int64
+rockBitmaps =
+    let content = do
+            x <- [1..8]
+            y <- [1..8]
+            let bits = coordsToBitmap $ (concatMap id $ emptyBoardRockRays x y)
+            return (coordsToBitIndex x y, bits)
+    in array (0, 63) content
+
+emptyBoardRockHops x y = rockBitmaps ! coordsToBitIndex x y
 
 data FileState = OpenFile | SemiOpenFile | ClosedFile
 
