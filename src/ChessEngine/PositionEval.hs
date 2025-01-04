@@ -87,7 +87,7 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             sortedCandidates <- liftIO $ sortCandidates cache board ply threadIndex (pseudoLegalCandidateMoves board)
             let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
             let sortedCandidatesWithBoards' =
-                  if depth == maxDepth
+                  if ply == 0
                     then rootBoostCandidateIndex sortedCandidatesWithBoards
                     else sortedCandidatesWithBoards
             ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards'
@@ -281,7 +281,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             params
               { allowNullMove = False,
                 depth = depth - 3, -- R = 2
-                board = board {turn = otherPlayer (turn board)},
+                board = applyNullMove board,
                 alpha = negateEval beta,
                 beta = negateEval alpha
               }
@@ -324,6 +324,17 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
                     then executeLmr
                     else executeDefault
       where
+
+        -- extend search by one in case of pawn promotion, pawn reaching second to last rank, or giivng check
+        depthExtension =
+            let pawnBeforePromo = (if (turn board) == White then 7 else 2) == (toRow candidateMove)
+                                    && hasPieceOnSquare candidateBoard (toCol candidateMove) (toRow candidateMove) (ChessPiece (turn board) Pawn)
+                pawnPromo = promotion candidateMove /= NoPromo
+                givesCheck = playerInCheck candidateBoard
+            in if givesCheck || pawnBeforePromo || pawnPromo
+               then 1
+               else 0
+
         tryNullWindow = siblingIndex > 0 && not (isNullWindow alpha beta)
 
         executeNullWindow :: Bool -> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
@@ -331,7 +342,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           let nullBeta = case alpha of PositionEval v -> PositionEval (v + 1)
               params' =
                 params
-                  { depth = (depth - (if tryLmr then lmrReduction else 0) - 1),
+                  { depth = depth - (if tryLmr then lmrReduction else 0) - 1 + depthExtension,
                     ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
@@ -354,7 +365,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
         executeDefault = do
           let params' =
                 params
-                  { depth = (depth - 1),
+                  { depth = depth - 1 + depthExtension,
                     ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,
@@ -366,7 +377,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           newBestMoveValue <-
             if (siblingIndex == 0 || eval > alpha)
               then do
-                when (depth == maxDepth) $ do
+                when (ply == 0) $ do
                   let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moveLine
                   when (threadIndex == 1) $ do
                     env <- lift ask
@@ -392,7 +403,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
         executeLmr = do
           let params' =
                 params
-                  { depth = (depth - lmrReduction - 1),
+                  { depth = depth - lmrReduction - 1 + depthExtension,
                     ply = ply + 1,
                     board = candidateBoard,
                     nodesParsed = nodesParsed,

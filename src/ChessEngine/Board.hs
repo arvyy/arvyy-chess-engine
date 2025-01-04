@@ -31,6 +31,7 @@ module ChessEngine.Board
     quickPawnCount,
     is3foldRepetition,
     initialBoard,
+    applyNullMove,
     applyMove,
     applyMoveUnsafe,
     getCaptureInfo,
@@ -838,6 +839,12 @@ candidateMoveLegal board candidate =
         || (isEnPassant && (squarePotentiallyUnderPin (toCol candidate) (fromRow candidate)))
     isKingMove =
       fromRow candidate == king_y && fromCol candidate == king_x
+
+-- change current turn (not forgetting to update zebra hash)
+-- used in null move pruning
+applyNullMove :: ChessBoard -> ChessBoard
+applyNullMove board@ChessBoard{ zebraHash, turn } =
+    board { turn = otherPlayer turn, zebraHash = zebraHash `xor` zebraHashBlackTurn, prev = Nothing }
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
