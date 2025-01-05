@@ -292,14 +292,13 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates = do
-      -- we want to prune nodes at depth 1 and 2, but we're pruning them when looking at candidate list
-      -- from preceding node, ie, depth 2 and 3
+      -- if futilityThreshold < alpha, assume it the move has no practical chances of improving it
       futilityThreshold <-
         if depth == 1
-          then Just . (\eval -> evalAdd eval 150) <$> (liftIO $ finalDepthEval cache board)
+          then Just . (\eval -> evalAdd eval 100) <$> (liftIO $ finalDepthEval cache board)
           else
             if depth == 2
-              then Just . (\eval -> evalAdd eval 900) <$> (liftIO $ finalDepthEval cache board)
+              then Just . (\eval -> evalAdd eval 200) <$> (liftIO $ finalDepthEval cache board)
               else return Nothing
       let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityThreshold = futilityThreshold}
       result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
@@ -424,7 +423,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
               isNotCapture = isNothing $ getCaptureInfo board candidateMove
               isNotPromo = promotion candidateMove == NoPromo
            in case futilityThreshold of
-                Just v -> isNotPromo && isNotInCheck && doesNotGiveCheck && isNotCapture && v < alpha
+                Just v -> siblingIndex > 0 && v < alpha && isNotPromo && isNotInCheck && doesNotGiveCheck && isNotCapture
                 _ -> False
 
 isNullWindow :: PositionEval -> PositionEval -> Bool
