@@ -224,31 +224,8 @@ scoreKingSafety board player =
     -- expect 3 pawns in front of king 2x3 rectangle; penalize by -100 for each missing pawn
     scorePawnShield :: Int
     scorePawnShield =
-      let x1 = case king_x of
-            1 -> 1
-            8 -> 6
-            n -> n - 1
-          x2 = x1 + 2
-          y1 = case player of
-            White -> king_y + 1
-            Black -> king_y - 2
-          y2 = y1 + 1
-          pawnShield = countPawnsInArea x1 y1 x2 y2
+      let pawnShield = countPawnShield board king_x king_y player
        in ((min 3 pawnShield) - 3) * 100
-
-    countPawnsInArea x1 y1 x2 y2 =
-      let squares = do
-            x' <- [(max x1 1) .. (min x2 8)]
-            y' <- [(max y1 1) .. (min y2 8)]
-            return (x', y')
-       in foldl'
-            ( \count (x, y) ->
-                if hasPieceOnSquare board x y (ChessPiece player Pawn)
-                  then count + 1
-                  else count
-            )
-            0
-            squares
 
     -- TODO
     -- scoreOpenFile

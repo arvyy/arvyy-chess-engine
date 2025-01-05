@@ -45,7 +45,8 @@ module ChessEngine.Board
     fileState,
     FileState (..),
     isPassedPawn,
-    isBackwardPawn
+    isBackwardPawn,
+    countPawnShield
   )
 where
 
@@ -1161,6 +1162,7 @@ fileBitsArray =
     where
         fileBits x y1 y2 = foldl' (\bits y -> setBit bits (coordsToBitIndex x y)) 0 [y1..y2]
 
+{-# INLINE fileState #-}
 fileState :: ChessBoard -> Int -> PlayerColor -> FileState
 fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} x color =
     let fileBits = fileBitsArray ! (x, 2, 7)
@@ -1173,6 +1175,7 @@ fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} x c
        then SemiOpenFile
        else OpenFile
 
+{-# INLINE isPassedPawn #-}
 isPassedPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
 isPassedPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y White =
     let linesToCheck = do
@@ -1195,6 +1198,7 @@ isPassedPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y Bla
        then True
        else all lineIsClear linesToCheck
 
+{-# INLINE isBackwardPawn #-}
 isBackwardPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
 isBackwardPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y White =
     let onLastRow = y == 7
@@ -1208,3 +1212,27 @@ isBackwardPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y B
     in if onLastRow
        then False
        else (black .&. pawns .&. lineToCheck) /= 0
+
+pawnShieldBitsArray :: Array (Int, Int) Int64
+pawnShieldBitsArray =
+    let content = do
+            x <- [1..6]
+            y <- [2..6]
+            let coords = [(x', y') | x' <- [x, x + 1, x + 2], y' <- [y, y + 1]]
+            let bitmap = coordsToBitmap coords
+            return ((x, y), bitmap)
+    in array ((1, 2), (6, 6)) content
+
+{-# INLINE countPawnShield #-}
+countPawnShield :: ChessBoard -> Int -> Int -> PlayerColor -> Int
+countPawnShield ChessBoard { pieces = ChessBoardPositions { white, black, pawns } } kingX kingY player =
+  let x1 = case kingX of
+        1 -> 1
+        8 -> 6
+        n -> n - 1
+      y1 = case player of
+        White -> kingY + 1
+        Black -> kingY - 2
+      shieldMask = if inRange (bounds pawnShieldBitsArray) (x1, y1) then pawnShieldBitsArray ! (x1, y1) else 0
+      matchedPawns = (if player == White then white else black) .&. pawns .&. shieldMask
+  in popCount matchedPawns
