@@ -294,12 +294,15 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
     foldCandidates = do
       -- if futilityThreshold < alpha, assume it the move has no practical chances of improving it
       futilityThreshold <-
-        if depth == 1
-          then Just . (\eval -> evalAdd eval 100) <$> (liftIO $ finalDepthEval cache board)
-          else
-            if depth == 2
-              then Just . (\eval -> evalAdd eval 200) <$> (liftIO $ finalDepthEval cache board)
-              else return Nothing
+        let margin = case depth of
+                        1 -> Just 100
+                        2 -> Just 200
+                        3 -> Just 400
+                        _ -> Nothing
+        in case margin of
+            Just n -> Just . (\eval -> evalAdd eval n) <$> (liftIO $ finalDepthEval cache board)
+            Nothing -> return Nothing
+
       let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityThreshold = futilityThreshold}
       result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
       return $ case result of
