@@ -22,9 +22,11 @@ evaluatePawns cache board = do
     doEvaluatePawns = foldl' (\score pawn -> score + doEvaluatePawn pawn) 0
 
     doEvaluatePawn (x, y, ChessPiece color _) =
-      let score =
+      let untilPromotion = if color == White then 8 - y else y - 1
+          passedPawnBonus = (8 - untilPromotion) * 4
+          score =
             100
-              + (if isPassedPawn board x y color then 10 else 0)
+              + (if isPassedPawn board x y color then passedPawnBonus else 0)
               + (if isBackwardPawn board x y color then (-20) else 0)
               + (if isProtectedPawn x y color then 15 else 0)
               + (floor $ 100 * piecePositionBonus x y (ChessPiece color Pawn))
@@ -211,7 +213,7 @@ scoreConnectedRocks board color =
 -- score most likely to be negative, ie, penalty for lacking safety
 scoreKingSafety :: ChessBoard -> PlayerColor -> Int
 scoreKingSafety board player =
-  (floor $ fromIntegral (scorePawnShield + 0) * safetyMultiplier)
+  (floor $ (fromIntegral (scorePawnShield + scoreSurroundingOpenFiles)) * safetyMultiplier)
     + scoreKingOnEdgeInEndgame
     + scoreKingCloseToOpponentKingInWinningEndGame
   where
@@ -225,10 +227,23 @@ scoreKingSafety board player =
     scorePawnShield :: Int
     scorePawnShield =
       let pawnShield = countPawnShield board king_x king_y player
-       in ((min 3 pawnShield) - 3) * 100
+       in ((min 3 pawnShield) - 3) * 80
 
-    -- TODO
-    -- scoreOpenFile
+    -- penalize if file is open or semi-open for opponent
+    scoreSurroundingOpenFiles :: Int
+    scoreSurroundingOpenFiles =
+        let v1 = if (king_x > 1) then scoreOpenFile 1 else 0
+            v2 = if (king_x < 8) then scoreOpenFile 8 else 0
+            v3 = scoreOpenFile king_x
+        in v1 + v2 + v3
+
+    scoreOpenFile :: Int -> Int
+    scoreOpenFile  x =
+        let state = fileState board x (otherPlayer player)
+        in case state of
+                OpenFile -> (-100)
+                _ -> 0
+
 
     -- when this side is down to king, score it worse the closer it is to edge
     -- so that winning side knows to push it towards the edge and not blunder 50-move draw
