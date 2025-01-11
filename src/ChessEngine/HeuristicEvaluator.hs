@@ -99,35 +99,24 @@ finalDepthEval' infoConsumer cache board = do
 scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePieceThreats board piece =
   let isOwnSide y = case piece of
-        (_, _, ChessPiece White _) -> y < 4
-        _ -> y > 5
+        (_, _, ChessPiece White _) -> y < 5
+        _ -> y > 4
       mobilityScore =
         foldl'
-          (\score (x, y) -> if isOwnSide y then score + 10 else score + 13)
+          (\score (x, y) -> score + 4 + (if isOwnSide y then 0 else 1) + (if x > 1 && x < 8 then 1 else 0))
           0
           (pieceThreats board piece)
-      (_, _, ChessPiece _ pieceType) = piece
-      (maxBonus1, maxMobilityScore1, maxBonus2, maxMobilityScore2) = case pieceType of
-        -- due to queen range, it needs reduced reward otherwise bot is very eager to play with queen
-        -- without developing other pieces
-        -- TODO fix this by punishing evaluation for pieces being in starting position?
-        Horse -> (30, 30, 10, 80)
-        Bishop -> (30, 40, 10, 100)
-        Rock -> (40, 50, 20, 100)
-        Queen -> (5, 40, 10, 150)
-        _ -> (0, 0, 0, 0)
-   in (maxBonus1 * (min mobilityScore maxMobilityScore1)) `div` maxMobilityScore1
-        + (maxBonus2 * (min mobilityScore maxMobilityScore2)) `div` maxMobilityScore2
+    in mobilityScore
 
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
   let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
-        King -> 10
-        Bishop -> 30
-        Horse -> 30
-        Rock -> 40
+        King -> 50
+        Bishop -> 20
+        Horse -> 20
+        Rock -> 30
         _ -> 0
       score = squareRating * maxBonus
    in floor score

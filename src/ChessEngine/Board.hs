@@ -48,7 +48,8 @@ module ChessEngine.Board
     isPassedPawn,
     isBackwardPawn,
     countPawnShield,
-    initPrecomputation
+    initPrecomputation,
+    coordsToBitIndex
   )
 where
 
@@ -1361,34 +1362,6 @@ queenCandidateMoves :: Int -> Int -> PlayerColor -> ChessBoard -> [(Int, Int)]
 queenCandidateMoves x y player board = bitmapToCoords $ 
     magicCandidateMovesBitboard rockMagicBitboards x y player board
     .|. magicCandidateMovesBitboard bishopMagicBitboards x y player board
-
-
-debugRenderBitmap :: Int64 -> IO ()
-debugRenderBitmap bitmap =
-  putStrLn $ intercalate "\n" $ makeLine <$> [1..8]
-  where
-    makeLine y = intercalate " " $ (\x -> if testBit bitmap (coordsToBitIndex x (9 - y)) then "X" else "O") <$> [1..8]
-
-debugMagicBitboardRockCandidates :: String -> Int -> Int -> IO ()
-debugMagicBitboardRockCandidates fen x y = do
-    let (board, _) = fromJust $ loadFen fen
-    let bitboard = magicCandidateMovesBitboard rockMagicBitboards x y (turn board) board
-    debugRenderBitmap bitboard
-    
-debugPlayerInCheck :: String -> PlayerColor -> Bool
-debugPlayerInCheck fen color =
-    let (board, _) = fromJust $ loadFen fen
-    in playerInCheck' board color
-    
-debugPlayerPosition :: String -> PlayerColor -> (Int, Int)
-debugPlayerPosition fen color =
-    let (board, _) = fromJust $ loadFen fen
-    in playerKingPosition board color
-
-debugSquareThreatenedBy :: String -> Int -> Int -> PlayerColor -> Maybe (Int, Int, ChessPiece)
-debugSquareThreatenedBy fen x y color =
-    let (board, _) = fromJust $ loadFen fen
-    in squareThreatenedBy board color x y
 
 initPrecomputation :: ()
 initPrecomputation =

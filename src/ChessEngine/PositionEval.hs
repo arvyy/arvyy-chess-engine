@@ -77,7 +77,7 @@ type App = ReaderT (IORef EvaluationContext) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
 evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
-  if is3foldRepetition board
+  if (is3foldRepetition board && ply > 0)
     then return ((PositionEval 0, []), 0)
     else do
       let depth = max depth' 0
