@@ -24,7 +24,6 @@ import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe)
-import GHC.Stack (HasCallStack)
 
 type BestMove = (PositionEval, [Move])
 

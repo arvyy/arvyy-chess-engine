@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -46,7 +47,8 @@ module ChessEngine.Board
     FileState (..),
     isPassedPawn,
     isBackwardPawn,
-    countPawnShield
+    countPawnShield,
+    initPrecomputation
   )
 where
 
@@ -57,7 +59,7 @@ import Data.Char
 import Data.Foldable (find, foldl', foldlM)
 import Data.Hashable
 import Data.Int (Int64)
-import Data.List (unfoldr)
+import Data.List (unfoldr, intercalate)
 import Data.Maybe
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -65,7 +67,11 @@ import System.Random (randoms)
 import System.Random.TF (mkTFGen)
 import Text.Read (readMaybe)
 import Control.Applicative
-import GHC.Stack (HasCallStack)
+import qualified Data.Set as Set
+import Control.Monad (foldM)
+import Control.Monad (msum)
+import Control.DeepSeq (NFData (..), deepseq, force)
+import qualified Data.IntMap.Strict as IntMap
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -86,6 +92,7 @@ positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessP
 positionsToList positions types =
   concatMap (\color -> playerPositionsToList positions color types) [White, Black]
 
+{-# INLINE playerPositionsToList #-}
 playerPositionsToList :: ChessBoardPositions -> PlayerColor -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 playerPositionsToList ChessBoardPositions {black, white, bishops, horses, queens, kings, pawns, rocks} color types =
   concatMap getTypeValues types
@@ -114,13 +121,14 @@ playerKingPosition ChessBoard {pieces = ChessBoardPositions {black, white, kings
   let bitmap = (if color == White then white else black) .&. kings
    in bitIndexToCoords (countTrailingZeros bitmap)
 
+{-# INLINE bitmapToCoords #-}
 bitmapToCoords :: Int64 -> [(Int, Int)]
 bitmapToCoords bitmap =
   unfoldr unfoldStep bitmap
   where
     unfoldStep bitmap =
       let index = countTrailingZeros bitmap
-       in if index == 64
+       in if index >= 64
             then Nothing
             else Just (bitIndexToCoords index, clearBit bitmap index)
 
@@ -129,14 +137,16 @@ bitIndexToCoords :: Int -> (Int, Int)
 bitIndexToCoords index =
   let x' = mod index 8
       y' = div index 8
-   in (x' + 1, y' + 1)
+   in if index >= 64
+      then error $ "Bitmax index out of bounds: " ++ (show index)
+      else (x' + 1, y' + 1)
 
 coordsToBitmap :: [(Int, Int)] -> Int64
 coordsToBitmap coords =
   foldl' (\bitmap (x, y) -> bitmap .|. (1 `shiftL` (coordsToBitIndex x y))) 0 coords
 
 {-# INLINE coordsToBitIndex #-}
-coordsToBitIndex ::  Int -> Int -> Int
+coordsToBitIndex :: Int -> Int -> Int
 coordsToBitIndex x y =
   let value = (y - 1) * 8 + x - 1
    in if value > 63 then error ("Coordinate out of bounds: " ++ show (x, y)) else value
@@ -590,6 +600,7 @@ emptyOrOccupiedByOpponent ChessBoard {pieces = ChessBoardPositions {black = blac
 
 -- given board and piece find threatened squares (for the purposes of check, castling, and eval for controlled squares)
 -- ignores own pin status
+{-# INLINE pieceThreats #-}
 pieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> [(Int, Int)]
 pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, ChessPiece color King) =
   {-# SCC "m_pieceThreats_King" #-}
@@ -599,7 +610,8 @@ pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, Che
    in bitmapToCoords hops
 pieceThreats board (x, y, ChessPiece color Queen) =
   {-# SCC "m_pieceThreats_Queen" #-}
-  concatMap (\pieceType -> pieceThreats board (x, y, ChessPiece color pieceType)) [Rock, Bishop]
+  -- concatMap (\pieceType -> pieceThreats board (x, y, ChessPiece color pieceType)) [Rock, Bishop]
+  queenCandidateMoves x y color board
 pieceThreats board (x, y, ChessPiece color Pawn) =
   {-# SCC "m_pieceThreats_Pawn" #-}
   let nextRow = if color == Black then y - 1 else y + 1
@@ -609,12 +621,18 @@ pieceThreats board (x, y, ChessPiece color Pawn) =
         candidates
 pieceThreats board (x, y, ChessPiece color Bishop) =
   {-# SCC "m_pieceThreats_Bishop" #-}
+  {-
   let rays = emptyBoardBishopRays x y
    in concatMap (rayToValidMoves color board) rays
+  -}
+  bishopCandidateMoves x y color board
 pieceThreats board (x, y, ChessPiece color Rock) =
   {-# SCC "m_pieceThreats_Rock" #-}
+  {-
   let rays = emptyBoardRockRays x y
    in concatMap (rayToValidMoves color board) rays
+   -}
+  rockCandidateMoves x y color board
 pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, ChessPiece color Horse) =
   {-# SCC "m_pieceThreats_Horse" #-}
   let baseHops = emptyBoardHorseHops x y
@@ -622,23 +640,8 @@ pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, Che
       hops = baseHops .&. bitboardMask
    in bitmapToCoords hops
 
-rayToValidMoves :: PlayerColor -> ChessBoard -> [(Int, Int)] -> [(Int, Int)]
-rayToValidMoves color board squares = filterUntilHit squares
-  where
-    filterUntilHit :: [(Int, Int)] -> [(Int, Int)]
-    filterUntilHit positions =
-      let count = case foldlM foldStep 0 positions of
-            Right n -> n
-            Left n -> n
-       in take count positions
-
-    foldStep :: Int -> (Int, Int) -> Either Int Int
-    foldStep count (x, y)
-      | isPlayerOnSquare board color x y = Left count
-      | isPlayerOnSquare board (otherPlayer color) x y = Left $ count + 1
-      | otherwise = Right $ count + 1
-
 -- returns least valuable piece (so this function can be used in SEE) which threatens given square
+{-# INLINE squareThreatenedBy #-}
 squareThreatenedBy :: ChessBoard -> PlayerColor -> Int -> Int -> Maybe (Int, Int, ChessPiece)
 squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings, bishops, rocks, queens, white, black}} player x y =
   threatenedByPawn 
@@ -652,6 +655,9 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
     opponentColor = if player == White then Black else White
     opponentBits = if opponentColor == White then white else black
 
+    targetBitmap :: Int64
+    targetBitmap = force $ setBit 0 (coordsToBitIndex x y)
+
     threatenedByHorse = {-# SCC "m_threatenedByHorse" #-}
       let opponentHorses = (if opponentColor == White then white else black) .&. horses
           matchedHorses = opponentHorses .&. emptyBoardHorseHops x y
@@ -660,36 +666,32 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
             (x, y):_ -> Just (x, y, ChessPiece opponentColor Horse)
             _ -> Nothing
 
-    threatenedOnRay :: ChessPieceType -> [(Int, Int)] -> Maybe (Int, Int, ChessPiece)
-    threatenedOnRay threateningType ray =  {-# SCC "m_threatenedOnRay" #-}
-      case foldlM foldStep () ray of
-        Right _ -> Nothing
-        Left t -> t
-      where
-        foldStep _ (x, y)
-          | Just (ChessPiece color' pieceType') <- pieceOnSquare board x y = 
-            if color' == opponentColor && pieceType' == threateningType
-            then Left $ Just (x, y, ChessPiece opponentColor threateningType)
-            else Left Nothing
-          | otherwise = Right ()
-
     threatenedByBishop = {-# SCC "m_threatenedByBishop" #-} 
-        let potentialBits = opponentBits .&. bishops .&. emptyBoardBishopHops x y
-        in if potentialBits == 0
-           then Nothing
-           else foldl' (<|>) Nothing $ threatenedOnRay Bishop <$> emptyBoardBishopRays x y
+        let bishopsCoords = bitmapToCoords $ opponentBits .&. bishops
+            checkMatch (bishopX, bishopY) =
+                if (magicCandidateMovesBitboard bishopMagicBitboards bishopX bishopY opponentColor board) .&. targetBitmap /= 0
+                then Just (bishopX, bishopY, (ChessPiece opponentColor Bishop))
+                else Nothing
+        in msum $ checkMatch <$> bishopsCoords
 
     threatenedByRock = {-# SCC "m_threatenedByRock" #-} 
-        let potentialBits = opponentBits .&. rocks .&. emptyBoardRockHops x y
-        in if potentialBits == 0
-           then Nothing
-           else foldl' (<|>) Nothing $ threatenedOnRay Rock <$> emptyBoardRockRays x y
+        let rockCoords = bitmapToCoords $ opponentBits .&. rocks
+            checkMatch (rockX, rockY) =
+                if (magicCandidateMovesBitboard rockMagicBitboards rockX rockY opponentColor board) .&. targetBitmap /= 0
+                then Just (rockX, rockY, (ChessPiece opponentColor Rock))
+                else Nothing
+        in msum $ checkMatch <$> rockCoords
 
     threatenedByQueen = {-# SCC "m_threatenedByQueen" #-} 
-        let potentialBits = opponentBits .&. queens .&. (emptyBoardBishopHops x y .|. emptyBoardRockHops x y)
-        in if potentialBits == 0
-           then Nothing
-           else foldl' (<|>) Nothing $ threatenedOnRay Queen <$> emptyBoardBishopRays x y ++ emptyBoardRockRays x y
+        let queenCoords = bitmapToCoords $ opponentBits .&. queens
+            queenMagicBitboard queenX queenY = 
+                (magicCandidateMovesBitboard bishopMagicBitboards queenX queenY opponentColor board)
+                .|. (magicCandidateMovesBitboard rockMagicBitboards queenX queenY opponentColor board)
+            checkMatch (queenX, queenY) =
+                if (queenMagicBitboard queenX queenY) .&. targetBitmap /= 0
+                then Just (queenX, queenY, (ChessPiece opponentColor Queen))
+                else Nothing
+        in msum $ checkMatch <$> queenCoords
 
     threatenedByPawn = {-# SCC "m_threatenedByPawn" #-}
       let y' = if player == White then y + 1 else y - 1
@@ -746,6 +748,7 @@ playerInCheck' board player =
   let (x, y) = playerKingPosition board player
    in isJust $ squareThreatenedBy board player x y
 
+{-# INLINE pawnCandidateMoves #-}
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 pawnCandidateMoves board x y player =
   let (dir, inStartingPos, inEnPassantPos, promotesOnMove, opponent) =
@@ -782,6 +785,7 @@ pawnCandidateMoves board x y player =
         | otherwise = []
    in normalCaptures ++ enPassantCaptures ++ doubleDipMove ++ singleMove
 
+{-# INLINE canCastleKingSide #-}
 canCastleKingSide :: ChessBoard -> PlayerColor -> Bool
 canCastleKingSide board color =
   let hasRights = if color == White then whiteKingCastle board else blackKingCastle board
@@ -792,6 +796,7 @@ canCastleKingSide board color =
         _ -> True
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
+{-# INLINE canCastleQueenSide #-}
 canCastleQueenSide :: ChessBoard -> PlayerColor -> Bool
 canCastleQueenSide board color =
   let hasRights = if color == White then whiteQueenCastle board else blackQueenCastle board
@@ -802,6 +807,7 @@ canCastleQueenSide board color =
         _ -> True
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
+{-# INLINE kingCandidateMoves #-}
 kingCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
 kingCandidateMoves board x y player =
   let baseMoves =
@@ -811,6 +817,7 @@ kingCandidateMoves board x y player =
       castleQueenSide = ([createMove x y 3 y NoPromo | canCastleQueenSide board player])
    in castleKingSide ++ (castleQueenSide ++ baseMoves)
 
+{-# INLINE pieceCandidateMoves #-}
 pieceCandidateMoves :: ChessBoard -> (Int, Int, ChessPiece) -> [Move]
 pieceCandidateMoves board (x, y, ChessPiece color Pawn) = pawnCandidateMoves board x y color
 pieceCandidateMoves board (x, y, ChessPiece color King) = kingCandidateMoves board x y color
@@ -821,6 +828,7 @@ pieceCandidateMoves board piece@(x, y, _) =
 
 -- candidate moves before handling invalid ones (eg., not resolving being in check)
 -- ie., pseudo legal
+{-# INLINE pseudoLegalCandidateMoves #-}
 pseudoLegalCandidateMoves :: ChessBoard -> [Move]
 pseudoLegalCandidateMoves board =
   {-# SCC "m_pseudoLegalCandidateMoves" #-}
@@ -830,6 +838,7 @@ pseudoLegalCandidateMoves board =
 
 -- returns just if given candidate is legal, empty otherwise
 -- (candidate can be illegal because pseudoLegalCandidateMoves returns pseudolegal moves)
+{-# INLINE candidateMoveLegal #-}
 candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
 candidateMoveLegal board candidate =
   let board' = applyMoveUnsafe board candidate
@@ -1052,21 +1061,21 @@ zebraHashPiece x y (ChessPiece color pieceType) =
       colOffset = (y - 1) * 8
       rowOffset = x - 1
       index = colorOffset + pieceOffset + colOffset + rowOffset
-   in zebraHashKeys ! index
+   in zebraHashKeys!index
 
 zebraHashQueenCastle :: PlayerColor -> Word64
-zebraHashQueenCastle White = zebraHashKeys ! (64 * 12 + 0)
-zebraHashQueenCastle Black = zebraHashKeys ! (64 * 12 + 1)
+zebraHashQueenCastle White = zebraHashKeys!(64 * 12 + 0)
+zebraHashQueenCastle Black = zebraHashKeys!(64 * 12 + 1)
 
 zebraHashKingCastle :: PlayerColor -> Word64
-zebraHashKingCastle White = zebraHashKeys ! (64 * 12 + 2)
-zebraHashKingCastle Black = zebraHashKeys ! (64 * 12 + 3)
+zebraHashKingCastle White = zebraHashKeys!(64 * 12 + 2)
+zebraHashKingCastle Black = zebraHashKeys!(64 * 12 + 3)
 
 zebraHashBlackTurn :: Word64
-zebraHashBlackTurn = zebraHashKeys ! (64 * 12 + 4)
+zebraHashBlackTurn = zebraHashKeys!(64 * 12 + 4)
 
 zebraHashEnPeasent :: Int -> Word64
-zebraHashEnPeasent file = zebraHashKeys ! (64 * 12 + 4 + file)
+zebraHashEnPeasent file = zebraHashKeys!(64 * 12 + 4 + file)
 
 initialZebraHash :: ChessBoard -> Word64
 initialZebraHash board@ChessBoard {turn, whiteKingCastle, whiteQueenCastle, blackKingCastle, blackQueenCastle, enPassant} =
@@ -1124,29 +1133,7 @@ computeKingHops x y =
    in coordsToBitmap $ filter (\(x', y') -> inBounds x' y' && not (x == x' && y == y')) hops
 
 emptyBoardKingHops :: Int -> Int -> Int64
-emptyBoardKingHops x y = kingHops ! coordsToBitIndex x y
-
-bishopBitmaps :: Array Int Int64
-bishopBitmaps =
-    let content = do
-            x <- [1..8]
-            y <- [1..8]
-            let bits = coordsToBitmap $ (concatMap id $ emptyBoardBishopRays x y)
-            return (coordsToBitIndex x y, bits)
-    in array (0, 63) content
-
-emptyBoardBishopHops x y = bishopBitmaps ! coordsToBitIndex x y
-
-rockBitmaps :: Array Int Int64
-rockBitmaps =
-    let content = do
-            x <- [1..8]
-            y <- [1..8]
-            let bits = coordsToBitmap $ (concatMap id $ emptyBoardRockRays x y)
-            return (coordsToBitIndex x y, bits)
-    in array (0, 63) content
-
-emptyBoardRockHops x y = rockBitmaps ! coordsToBitIndex x y
+emptyBoardKingHops x y = kingHops!coordsToBitIndex x y
 
 data FileState = OpenFile | SemiOpenFile | ClosedFile
 
@@ -1165,7 +1152,7 @@ fileBitsArray =
 {-# INLINE fileState #-}
 fileState :: ChessBoard -> Int -> PlayerColor -> FileState
 fileState ChessBoard { pieces = ChessBoardPositions { white, black, pawns }} x color =
-    let fileBits = fileBitsArray ! (x, 2, 7)
+    let fileBits = fileBitsArray!(x, 2, 7)
         whiteBlock = (white .&. pawns .&. fileBits) > 0
         blackBlock = (black .&. pawns .&. fileBits) > 0
         (myBlock, opponentBlock) = if color == White then (whiteBlock, blackBlock) else (blackBlock, whiteBlock)
@@ -1180,7 +1167,7 @@ isPassedPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
 isPassedPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y White =
     let linesToCheck = do
             x' <- [x'' | x'' <- [x - 1 .. x + 1], x'' >= 1 && x'' <= 8]
-            return $ fileBitsArray ! (x', y + 1, 7)
+            return $ fileBitsArray!(x', y + 1, 7)
         opponentPawns = black .&. pawns
         lineIsClear bits = opponentPawns .&. bits == 0
         onLastRow = y == 7
@@ -1190,7 +1177,7 @@ isPassedPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y Whi
 isPassedPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y Black =
     let linesToCheck = do
             x' <- [x'' | x'' <- [x - 1 .. x + 1], x'' >= 1 && x'' <= 8]
-            return $ fileBitsArray ! (x', 2, y - 1)
+            return $ fileBitsArray!(x', 2, y - 1)
         opponentPawns = white .&. pawns
         lineIsClear bits = opponentPawns .&. bits == 0
         onLastRow = y == 2
@@ -1202,13 +1189,13 @@ isPassedPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y Bla
 isBackwardPawn :: ChessBoard -> Int -> Int -> PlayerColor -> Bool
 isBackwardPawn ChessBoard { pieces = ChessBoardPositions { white, pawns }} x y White =
     let onLastRow = y == 7
-        lineToCheck = fileBitsArray ! (x, y + 1, 7)
+        lineToCheck = fileBitsArray!(x, y + 1, 7)
     in if onLastRow
        then False
        else (white .&. pawns .&. lineToCheck) /= 0
 isBackwardPawn ChessBoard { pieces = ChessBoardPositions { black, pawns }} x y Black =
     let onLastRow = y == 2
-        lineToCheck = fileBitsArray ! (x, 2, y - 1)
+        lineToCheck = fileBitsArray!(x, 2, y - 1)
     in if onLastRow
        then False
        else (black .&. pawns .&. lineToCheck) /= 0
@@ -1233,6 +1220,180 @@ countPawnShield ChessBoard { pieces = ChessBoardPositions { white, black, pawns 
       y1 = case player of
         White -> kingY + 1
         Black -> kingY - 2
-      shieldMask = if inRange (bounds pawnShieldBitsArray) (x1, y1) then pawnShieldBitsArray ! (x1, y1) else 0
+      shieldMask = if inRange (bounds pawnShieldBitsArray) (x1, y1) then pawnShieldBitsArray!(x1, y1) else 0
       matchedPawns = (if player == White then white else black) .&. pawns .&. shieldMask
   in popCount matchedPawns
+
+
+
+
+  ----------------- MAGIC TIME
+
+data MagicBitboard  = MagicBitboard 
+    { magicMul :: !Int64
+    , magicShift :: !Int
+    , mask :: !Int64
+    , boards :: IntMap.IntMap Int64
+    } deriving (Show)
+
+instance NFData MagicBitboard where
+    rnf (MagicBitboard { boards }) = boards `deepseq` ()
+
+-- returns all possible permutations of bitfield
+-- for bits that are set 1 in input
+permutateBits :: Int64 -> [Int64]
+permutateBits n =
+    if n == 0
+    then [0]
+    else let
+           index = countTrailingZeros n
+           otherBits = clearBit n index
+           otherPermutations = permutateBits otherBits
+         in 
+           ((\bits -> setBit bits index) <$> otherPermutations) ++ otherPermutations
+
+unfoldBitmapRay :: Int64 -> Int -> Int -> Int -> Int -> Int64
+unfoldBitmapRay blocker x y dx dy = force $ go 0 (x + dx) (y + dy)
+  where
+    go result x' y' =
+        if x' < 1 || x' > 8 || y' < 1 || y' > 8
+        then result
+        else if testBit blocker (coordsToBitIndex x' y')
+             then setBit result (coordsToBitIndex x' y')
+             else go (setBit result (coordsToBitIndex x' y')) (x' + dx) (y' + dy)
+
+borderMask :: Int64
+borderMask = 0
+
+computeRockMask :: Int64 -> Int -> Int -> Int64
+computeRockMask blockerMask x y =
+    (unfoldBitmapRay blockerMask x y 1 0)
+    .|. (unfoldBitmapRay blockerMask x y 0 1)
+    .|. (unfoldBitmapRay blockerMask x y (-1) 0)
+    .|. (unfoldBitmapRay blockerMask x y 0 (-1))
+
+computeBishopMask :: Int64 -> Int -> Int -> Int64
+computeBishopMask blockerMask x y =
+    (unfoldBitmapRay blockerMask x y 1 1)
+    .|. (unfoldBitmapRay blockerMask x y 1 (-1))
+    .|. (unfoldBitmapRay blockerMask x y (-1) 1)
+    .|. (unfoldBitmapRay blockerMask x y (-1) (-1))
+
+{-# INLINE computeMagicBitboardKey #-}
+computeMagicBitboardKey :: Int64 -> Int64 -> Int -> Int64
+computeMagicBitboardKey blockBitmap magicMul magicShift =
+    blockBitmap
+{-
+    let blockBitmapW :: Word64
+        blockBitmapW = fromIntegral blockBitmap
+        magicMulW :: Word64
+        magicMulW = fromIntegral magicMul
+        !result = fromIntegral $ (blockBitmapW * magicMulW) `shiftR` magicShift
+    in result
+-}
+
+-- check if given magic numbers produce collisions;
+-- if not returns complete magic board
+tryMagicNumbers :: Int -> Int -> Int64 -> Int -> Int64 -> (Int64 -> Int -> Int -> Int64) -> Maybe MagicBitboard
+tryMagicNumbers x y magicMul magicShift mask candidateMovesResolver =
+    let possibleBlockBitmaps = permutateBits mask
+    in case foldM step (Set.empty, []) possibleBlockBitmaps of
+        Just (_, computedValues) -> Just (MagicBitboard magicMul magicShift mask (IntMap.fromList computedValues))
+        _ -> Nothing
+  where
+    step :: (Set.Set Int64, [(IntMap.Key, Int64)]) -> Int64 -> Maybe (Set.Set Int64, [(IntMap.Key, Int64)])
+    step (usedKeys, computedValues) blockBitmap =
+        let !key = computeMagicBitboardKey blockBitmap magicMul magicShift --(abs (blockBitmap * magicMul)) `shiftR` magicShift
+            !value = candidateMovesResolver blockBitmap x y
+        in if Set.member key usedKeys
+           then Nothing -- key was already placed, collision, abort
+           else Just (Set.insert key usedKeys, (fromIntegral key, value):computedValues)
+
+findMagicNumbers :: Int -> Int -> Int -> Int64 -> (Int64 -> Int -> Int -> Int64) -> MagicBitboard
+findMagicNumbers x y magicShift mask candidateMoveResolver =
+    let numberGen = mkTFGen 123
+        magicMulOptions = take 100 $ randoms numberGen
+        magicMulResults = (\magicMul -> tryMagicNumbers x y magicMul magicShift mask candidateMoveResolver) <$> magicMulOptions
+    in case msum magicMulResults of
+        Just v -> v
+        _ -> error "Unexpected failure to find magic bitboard"
+
+rockMagicBitboards :: Array (Int, Int) MagicBitboard
+rockMagicBitboards =
+    let values = do
+            x <- [1..8]
+            y <- [1..8]
+            let mask = computeRockMask borderMask x y
+            let !magic = findMagicNumbers x y 44 mask computeRockMask
+            return ((x, y), magic)
+    in array ((1, 1), (8, 8)) values
+
+bishopMagicBitboards :: Array (Int, Int) MagicBitboard
+bishopMagicBitboards =
+    let values = do
+            x <- [1..8]
+            y <- [1..8]
+            let mask = computeBishopMask borderMask x y
+            let !magic = findMagicNumbers x y 44 mask computeBishopMask
+            return ((x, y), magic)
+    in array ((1, 1), (8, 8)) values
+
+{-# INLINE magicCandidateMovesBitboard #-}
+magicCandidateMovesBitboard :: Array (Int, Int) MagicBitboard -> Int -> Int -> PlayerColor -> ChessBoard -> Int64
+magicCandidateMovesBitboard magicBitboards x y player ChessBoard { pieces =  ChessBoardPositions { white, black } } =
+    let MagicBitboard { magicMul, magicShift, mask, boards } = magicBitboards ! (x, y)
+        occupancy = mask .&. (white .|. black)
+        key = computeMagicBitboardKey occupancy magicMul magicShift -- (abs (occupancy * magicMul)) `shiftR` magicShift
+        bitboard = (IntMap.!) boards (fromIntegral key)
+        myPieces = if player == White then white else black
+    in bitboard .&. (complement myPieces)
+
+{-# INLINE rockCandidateMoves #-}
+rockCandidateMoves ::  Int -> Int -> PlayerColor -> ChessBoard -> [(Int, Int)]
+rockCandidateMoves x y player board = bitmapToCoords $ magicCandidateMovesBitboard rockMagicBitboards x y player board
+
+{-# INLINE bishopCandidateMoves #-}
+bishopCandidateMoves :: Int -> Int -> PlayerColor -> ChessBoard -> [(Int, Int)]
+bishopCandidateMoves x y player board = bitmapToCoords $ magicCandidateMovesBitboard bishopMagicBitboards x y player board
+
+{-# INLINE queenCandidateMoves #-}
+queenCandidateMoves :: Int -> Int -> PlayerColor -> ChessBoard -> [(Int, Int)]
+queenCandidateMoves x y player board = bitmapToCoords $ 
+    magicCandidateMovesBitboard rockMagicBitboards x y player board
+    .|. magicCandidateMovesBitboard bishopMagicBitboards x y player board
+
+
+debugRenderBitmap :: Int64 -> IO ()
+debugRenderBitmap bitmap =
+  putStrLn $ intercalate "\n" $ makeLine <$> [1..8]
+  where
+    makeLine y = intercalate " " $ (\x -> if testBit bitmap (coordsToBitIndex x (9 - y)) then "X" else "O") <$> [1..8]
+
+debugMagicBitboardRockCandidates :: String -> Int -> Int -> IO ()
+debugMagicBitboardRockCandidates fen x y = do
+    let (board, _) = fromJust $ loadFen fen
+    let bitboard = magicCandidateMovesBitboard rockMagicBitboards x y (turn board) board
+    debugRenderBitmap bitboard
+    
+debugPlayerInCheck :: String -> PlayerColor -> Bool
+debugPlayerInCheck fen color =
+    let (board, _) = fromJust $ loadFen fen
+    in playerInCheck' board color
+    
+debugPlayerPosition :: String -> PlayerColor -> (Int, Int)
+debugPlayerPosition fen color =
+    let (board, _) = fromJust $ loadFen fen
+    in playerKingPosition board color
+
+debugSquareThreatenedBy :: String -> Int -> Int -> PlayerColor -> Maybe (Int, Int, ChessPiece)
+debugSquareThreatenedBy fen x y color =
+    let (board, _) = fromJust $ loadFen fen
+    in squareThreatenedBy board color x y
+
+initPrecomputation :: ()
+initPrecomputation =
+    rockMagicBitboards 
+    `deepseq` bishopMagicBitboards
+    `deepseq` kingHops
+    `deepseq` horseHops
+    `deepseq` ()

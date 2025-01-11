@@ -20,6 +20,7 @@ import Data.Time.Clock
 import Debug.Trace
 import System.Exit (exitSuccess)
 import System.IO
+import Control.DeepSeq (deepseq)
 
 -- TODO cleanup structure, separate persistent state (engineStateShowDebug) from others
 data EngineState = EngineState
@@ -87,7 +88,8 @@ doHandleCommand UCI stateRef _ = do
   putStrLn "id author github.com/arvyy"
   putStrLn "option name threads type spin default 1 min 1 max 8"
   putStrLn ""
-  putStrLn "uciok"
+  initPrecomputation `seq` putStrLn "uciok"
+  -- return initPrecomputation
 doHandleCommand IsReady state _ = do
   putStrLn "readyok"
 doHandleCommand (Debug enable) stateRef _ = do
