@@ -24,6 +24,7 @@ import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe)
+import Debug.Trace (trace)
 
 type BestMove = (PositionEval, [Move])
 
@@ -104,7 +105,7 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             then doSearch
             else
               if ( (bound == Exact)
-                     || (bound == LowerBound && eval > beta)
+                     || (bound == LowerBound && eval >= beta)
                      || (bound == UpperBound && eval < alpha)
                  )
                 then return ((eval, bestMoveLine), nodesParsed)
@@ -255,13 +256,13 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
   | otherwise = do
       -- try null move if there is sufficient depth left & null move is allowed (ie., wasn't done on previous move)
       -- only run when we're in a null window context (TODO why not set null window here?)
-      -- don't use null move in end game (when side to move has rook or less) to avoig zugzwang
+      -- don't use null move in end game (when side to move has only pawns) to avoig zugzwang
       tryNullMove <-
         if allowNullMove
           && isNullWindow alpha beta
           && depth > 3
           && (not $ playerInCheck board)
-          && (quickMaterialCount board (turn board) > 5)
+          && (quickMaterialCount board (turn board) >= 3)
           then do
             pat <- liftIO $ finalDepthEval cache board
             return $ pat > beta
@@ -278,8 +279,8 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
     evaluateNullMove = do
       let params' =
             params
-              { allowNullMove = False,
-                depth = depth - 3, -- R = 2
+              { allowNullMove = True,
+                depth = depth - 3,
                 board = applyNullMove board,
                 alpha = negateEval beta,
                 beta = negateEval alpha
@@ -287,7 +288,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
       ((moveValue, moves), newNodesParsed) <- do
         ((v, moves), nodes) <- evaluate' cache params'
         return ((negateEval v, moves), nodes)
-      return (newNodesParsed, moveValue > beta)
+      return (newNodesParsed, moveValue >= beta)
 
     foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates = do
