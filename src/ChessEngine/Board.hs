@@ -73,6 +73,7 @@ import Control.Monad (foldM)
 import Control.Monad (msum)
 import Control.DeepSeq (NFData (..), deepseq, force)
 import qualified Data.IntMap.Strict as IntMap
+import GHC.Integer (popCountInteger)
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -710,6 +711,66 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
             (x, y):_ -> Just (x, y, ChessPiece opponentColor King)
             _ -> Nothing
 
+-- find a friendly piece that is sole pin point
+-- ie., it's potentially illegal to move it
+{-# INLINE findPinpointOnRay #-}
+findPinpointOnRay :: ChessBoard -> PlayerColor -> [(Int, Int)] -> [ChessPieceType] -> Maybe (Int, Int)
+findPinpointOnRay board player ray pieceType = checkRayPin ray Nothing pieceType
+  where
+    opponentColor = otherPlayer player
+    checkRayPin moves ownPieceSeen pinnerTypes =
+      case foldlM (foldStepper pinnerTypes) ownPieceSeen moves of
+        Right _ -> Nothing
+        Left v -> v
+    foldStepper pinnerTypes ownPieceSeen (x, y) =
+      let ownPiece = isPlayerOnSquare board player x y
+          opponentPiece = isPlayerOnSquare board opponentColor x y
+       in if ownPiece
+          then if isJust ownPieceSeen
+               then Left Nothing -- two pieces on a ray, can't be single pinpoint
+               else Right $ Just (x, y)
+          else if opponentPiece
+          then case pieceOnSquare board x y of
+                Just (ChessPiece color pieceType)
+                    | color == opponentColor && elem pieceType pinnerTypes -> Left ownPieceSeen
+                _ -> Left Nothing
+          else
+            -- fallthrough; not own piece and not opponent piece, it's empty square
+            Right ownPieceSeen
+
+{-# INLINE findPotentialPinRay #-}
+findPotentialPinRay :: ChessBoard -> PlayerColor -> (Int, Int) -> Maybe ([(Int, Int)], [ChessPieceType])
+findPotentialPinRay board player (x, y) =
+  -- x, y -- position of a piece that is about to be moved
+  if x == kingx
+  then return (materializeRay 0 (if y < kingy then 1 else (-1)), [Queen, Rock])
+  else if y == kingy
+  then return (materializeRay (if x < kingx then 1 else (-1)) 0, [Queen, Rock])
+  else if (kingx - x) == (kingy - y)
+  then let dir = if (x > kingx) then 1 else (-1)
+       in return (materializeRay dir dir, [Queen, Bishop])
+  else if (kingx - x) == -(kingy - y)
+  then let dir = if (x > kingx) then 1 else (-1)
+       in return (materializeRay dir (- dir), [Queen, Bishop])
+  else Nothing
+
+  where
+    (kingx, kingy) = playerKingPosition board player
+    materializeRay dx dy =
+        let max_x = if dx == 0
+                    then 8
+                    else if dx > 0
+                    then (8 - kingx) `div` dx
+                    else (1 - kingx) `div` dx
+            max_y = if dy == 0
+                    then 8
+                    else if dy > 0
+                    then (8 - kingy) `div` dy
+                    else (1 - kingy) `div` dy
+            steps = min max_x max_y
+        in (\offset -> (kingx + offset * dx, kingy + offset * dy)) <$> [1..steps]
+
+{-
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
   any (\ray -> checkRayPin ray False [Queen, Bishop]) (emptyBoardBishopRays x y)
@@ -738,6 +799,7 @@ playerPotentiallyPinned board player =
                       if not ownPieceSeen && ownPiece
                         then Right True
                         else Left False
+-}
 
 {-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> Bool
@@ -850,7 +912,12 @@ candidateMoveLegal board candidate =
   where
     player = turn board
     wasInCheck = playerInCheck board
-    wasPotentiallyPinned = playerPotentiallyPinned board player
+    wasPotentiallyPinned = let poinpoint = do
+                                 (ray, types) <- findPotentialPinRay board player ((fromCol candidate), (fromRow candidate))
+                                 findPinpointOnRay board player ray types
+                           in case poinpoint of
+                                Just (pinx, piny) | pinx == (fromCol candidate) && piny == (fromRow candidate) -> True
+                                _ -> False
     (king_x, king_y) = playerKingPosition board player
     squarePotentiallyUnderPin x y =
         y == king_y 
@@ -1283,15 +1350,12 @@ computeBishopMask blockerMask x y =
 {-# INLINE computeMagicBitboardKey #-}
 computeMagicBitboardKey :: Int64 -> Int64 -> Int -> Int64
 computeMagicBitboardKey blockBitmap magicMul magicShift =
-    blockBitmap
-{-
     let blockBitmapW :: Word64
         blockBitmapW = fromIntegral blockBitmap
         magicMulW :: Word64
         magicMulW = fromIntegral magicMul
         !result = fromIntegral $ (blockBitmapW * magicMulW) `shiftR` magicShift
     in result
--}
 
 -- check if given magic numbers produce collisions;
 -- if not returns complete magic board
