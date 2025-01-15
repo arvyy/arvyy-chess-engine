@@ -13,6 +13,7 @@ import Test.QuickCheck (allProperties)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck as QC
+import Data.List.Fusion.Probe (fuseThis)
 
 candidateMoves board = mapMaybe mapper $ pseudoLegalCandidateMoves board
   where
@@ -70,6 +71,10 @@ candidateExists uci move =
       candidates = map fst $ candidateMoves board
    in elem move candidates
 
+testFusion :: TestTree
+testFusion = testCase "Test fusion" $ do
+    (length $ fuseThis $ pseudoLegalCandidateMoves initialBoard) @?= 20
+
 unitTests =
   testGroup
     "Unit tests"
@@ -107,7 +112,9 @@ unitTests =
         elem [(1, 1)] (emptyBoardBishopRays 2 2) @?= True
         elem [(3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)] (emptyBoardBishopRays 2 2) @?= True
         elem [(3, 1)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(1, 3)] (emptyBoardBishopRays 2 2) @?= True
+        elem [(1, 3)] (emptyBoardBishopRays 2 2) @?= True,
+
+      testFusion
     ]
 
 return []
