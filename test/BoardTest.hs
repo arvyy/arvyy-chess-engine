@@ -74,6 +74,10 @@ candidateExists uci move =
 testFusion :: TestTree
 testFusion = testCase "Test fusion" $ do
     (length $ fuseThis $ pseudoLegalCandidateMoves initialBoard) @?= 20
+    (length $ fuseThis $ boardPositions initialBoard) @?= 32
+    (length $ fuseThis $ boardPawnPositions initialBoard) @?= 16
+    (length $ fuseThis $ boardNonPawnPositions initialBoard) @?= 16
+    (length $ fuseThis $ pieceThreats initialBoard (1, 2, (ChessPiece White Pawn))) @?= 1
 
 unitTests =
   testGroup

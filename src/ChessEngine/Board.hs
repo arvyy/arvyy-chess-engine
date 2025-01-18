@@ -89,6 +89,7 @@ data ChessBoardPositions = ChessBoardPositions
 instance Show ChessBoardPositions where
   show positions = show $ positionsToList positions [Pawn, Bishop, Horse, Rock, Queen, King]
 
+{-# INLINE positionsToList #-}
 positionsToList :: ChessBoardPositions -> [ChessPieceType] -> [(Int, Int, ChessPiece)]
 positionsToList positions types =
   concatMap (\color -> playerPositionsToList positions color types) [White, Black]
@@ -224,7 +225,7 @@ pieceOnSquare' (ChessBoardPositions black white bishops horses queens kings pawn
       | testBit white bitIndex = Just White
       | otherwise = Nothing
     pieceType
-      | not $ testBit (white .|. black) bitIndex = Nothing
+      | isNothing color = Nothing
       | testBit pawns bitIndex = Just Pawn
       | testBit bishops bitIndex = Just Bishop
       | testBit horses bitIndex = Just Horse
@@ -301,12 +302,15 @@ promotion (Move bitRepr) = toEnum $ fromIntegral (shiftR bitRepr 12)
 moveToTuple :: Move -> (Int, Int, Int, Int, PromoChessPieceType)
 moveToTuple move = (fromCol move, fromRow move, toCol move, toRow move, promotion move)
 
+{-# INLINE boardPositions #-}
 boardPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
 boardPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn, Bishop, Horse, Rock, Queen, King]
 
+{-# INLINE boardNonPawnPositions #-}
 boardNonPawnPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
 boardNonPawnPositions ChessBoard {pieces = pieces} = positionsToList pieces [Bishop, Horse, Rock, Queen, King]
 
+{-# INLINE boardPawnPositions #-}
 boardPawnPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
 boardPawnPositions ChessBoard {pieces = pieces} = positionsToList pieces [Pawn]
 
@@ -434,6 +438,7 @@ applyMoveUnsafe board move =
   let ChessPiece player pieceType = case pieceOnSquare board x y of
         Nothing -> error $ "Unsafe move tried to move unexisting piece; board: " ++ boardToFen board ++ " Square: " ++ show (x, y)
         Just f -> f
+      opponentPlayer = otherPlayer player
       hash = zebraHash board
       fullMoves' = (fullMoves board) + (if (turn board) == Black then 1 else 0)
       isEnPassantMove = pieceType == Pawn && enPassant board == Just x' && (if player == White then y == 5 else y == 4)
@@ -501,12 +506,12 @@ applyMoveUnsafe board move =
             Just n -> zebraHashEnPeasent n
             Nothing -> 0
           `xor` zebraHashBlackTurn
-      isIrreversible = pieceType == Pawn || isCastleMove || isJust (pieceOnSquare' oldPieces x' y')
+      isIrreversible = pieceType == Pawn || isCastleMove || isPlayerOnSquare board opponentPlayer x' y'
       linkedBoard =
         if isIrreversible
           then Nothing
           else Just board
-   in board
+   in ChessBoard
         { pieces = newPieces,
           enPassant = enPassant',
           turn = otherPlayer (turn board),
@@ -792,9 +797,7 @@ canCastleKingSide board color =
   let hasRights = if color == White then whiteKingCastle board else blackKingCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 6 y && squareEmpty board 7 y
-      travelsThroughCheck = case filter (\x' -> isJust $ squareThreatenedBy board color x' y) [5, 6, 7] of
-        [] -> False
-        _ -> True
+      travelsThroughCheck = any (\x' -> isJust $ squareThreatenedBy board color x' y) [5, 6, 7]
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
 {-# INLINE canCastleQueenSide #-}
@@ -803,9 +806,7 @@ canCastleQueenSide board color =
   let hasRights = if color == White then whiteQueenCastle board else blackQueenCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 2 y && squareEmpty board 3 y && squareEmpty board 4 y
-      travelsThroughCheck = case filter (\x' -> isJust $ squareThreatenedBy board color x' y) [3, 4, 5] of
-        [] -> False
-        _ -> True
+      travelsThroughCheck = any (\x' -> isJust $ squareThreatenedBy board color x' y) [3, 4, 5]
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
 {-# INLINE kingCandidateMoves #-}
@@ -857,9 +858,7 @@ candidateMoveLegal board candidate =
         || x == king_x
         || abs (y - king_y) == abs (x - king_x)
     -- en pessent move might clear a pin held by opponent's pawn
-    isEnPassant = case pieceOnSquare board (fromCol candidate) (fromRow candidate) of
-      Just (ChessPiece _ Pawn) -> (fromCol candidate) /= (toCol candidate)
-      _ -> False
+    isEnPassant = hasPieceOnSquare board (fromCol candidate) (fromRow candidate) (ChessPiece player Pawn) && (fromCol candidate) /= (toCol candidate)
     movePotentiallyBreakingPin = 
         squarePotentiallyUnderPin (fromCol candidate) (fromRow candidate)
         || (isEnPassant && (squarePotentiallyUnderPin (toCol candidate) (fromRow candidate)))
