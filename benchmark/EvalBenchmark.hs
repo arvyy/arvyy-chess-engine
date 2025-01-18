@@ -19,7 +19,7 @@ evalPosition fen depth = do
 countNodes fen depth =
   let (board, _) = fromJust $ loadFen fen
       count = countNodes' board depth
-   in trace ("Count for depth " ++ (show depth) ++ ": " ++ (show count)) count
+   in count
 
 countNodes' board depth
   | depth == 0 = 1
@@ -33,8 +33,8 @@ main =
   defaultMain
     [ bgroup
         "position eval"
-        [ initPrecomputation `seq` bench "Initial pos 7 depth" $ whnfIO (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 7),
-          initPrecomputation `seq` bench "Midgame pos 7 depth" $ whnfIO (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11" 7)
+        [ initPrecomputation `seq` bench "Initial pos 6 depth" $ whnfIO (evalPosition "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1" 6),
+          initPrecomputation `seq` bench "Midgame pos 6 depth" $ whnfIO (evalPosition "r1bq1rk1/2p1bppp/pp2pn2/n7/P2P4/5NP1/1PQ1PPBP/RNB2RK1 w - - 0 11" 6)
         ],
       bgroup
         "move generator"
