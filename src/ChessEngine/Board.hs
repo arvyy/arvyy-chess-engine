@@ -49,7 +49,8 @@ module ChessEngine.Board
     isBackwardPawn,
     countPawnShield,
     initPrecomputation,
-    coordsToBitIndex
+    coordsToBitIndex,
+    inBounds
   )
 where
 
@@ -238,7 +239,7 @@ data ChessPieceType = Pawn | Horse | Bishop | Rock | Queen | King deriving (Show
 
 data PlayerColor = Black | White deriving (Eq, Show, Ord, Generic, Enum)
 
-data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq)
+data ChessPiece = ChessPiece !PlayerColor !ChessPieceType deriving (Show, Eq, Ord)
 
 -- TODO merge enPassant / castling / turn into pieces, to unify board state in one place
 data ChessBoard = ChessBoard
@@ -648,7 +649,7 @@ pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, Che
 
 -- returns least valuable piece (so this function can be used in SEE) which threatens given square
 {-# INLINE squareThreatenedBy #-}
-squareThreatenedBy :: ChessBoard -> PlayerColor -> Int -> Int -> Maybe (Int, Int, ChessPiece)
+squareThreatenedBy :: ChessBoard -> PlayerColor -> Int -> Int -> [(Int, Int, ChessPiece)]
 squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings, bishops, rocks, queens, white, black}} player x y =
   threatenedByPawn 
       <|> threatenedByHorse
@@ -668,24 +669,22 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
       let opponentHorses = (if opponentColor == White then white else black) .&. horses
           matchedHorses = opponentHorses .&. emptyBoardHorseHops x y
           horsesCoords = bitmapToCoords matchedHorses
-       in case horsesCoords of
-            (x, y):_ -> Just (x, y, ChessPiece opponentColor Horse)
-            _ -> Nothing
+       in (\(x, y) -> (x, y, ChessPiece opponentColor Horse)) <$> horsesCoords
 
     threatenedByBishop = {-# SCC "m_threatenedByBishop" #-} 
         let bishopsCoords = bitmapToCoords $ opponentBits .&. bishops
             checkMatch (bishopX, bishopY) =
                 if (magicCandidateMovesBitboard bishopMagicBitboards bishopX bishopY opponentColor board) .&. targetBitmap /= 0
-                then Just (bishopX, bishopY, (ChessPiece opponentColor Bishop))
-                else Nothing
+                then return (bishopX, bishopY, (ChessPiece opponentColor Bishop))
+                else []
         in msum $ checkMatch <$> bishopsCoords
 
     threatenedByRock = {-# SCC "m_threatenedByRock" #-} 
         let rockCoords = bitmapToCoords $ opponentBits .&. rocks
             checkMatch (rockX, rockY) =
                 if (magicCandidateMovesBitboard rockMagicBitboards rockX rockY opponentColor board) .&. targetBitmap /= 0
-                then Just (rockX, rockY, (ChessPiece opponentColor Rock))
-                else Nothing
+                then return (rockX, rockY, (ChessPiece opponentColor Rock))
+                else []
         in msum $ checkMatch <$> rockCoords
 
     threatenedByQueen = {-# SCC "m_threatenedByQueen" #-} 
@@ -695,14 +694,14 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
                 .|. (magicCandidateMovesBitboard rockMagicBitboards queenX queenY opponentColor board)
             checkMatch (queenX, queenY) =
                 if (queenMagicBitboard queenX queenY) .&. targetBitmap /= 0
-                then Just (queenX, queenY, (ChessPiece opponentColor Queen))
-                else Nothing
+                then return (queenX, queenY, (ChessPiece opponentColor Queen))
+                else []
         in msum $ checkMatch <$> queenCoords
 
     threatenedByPawn = {-# SCC "m_threatenedByPawn" #-}
       let y' = if player == White then y + 1 else y - 1
           pawnExists x' = inBounds x' y' && hasPieceOnSquare board x' y' (ChessPiece opponentColor Pawn)
-          maybePawn x' = if pawnExists x' then Just (x', y', ChessPiece opponentColor Pawn) else Nothing
+          maybePawn x' = if pawnExists x' then return (x', y', ChessPiece opponentColor Pawn) else []
        in maybePawn (x - 1) <|> maybePawn (x + 1)
 
     -- we can't just use `playerKingPosition` because a king might not exist
@@ -711,9 +710,7 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {horses, kings
       let opponentKings = (if opponentColor == White then white else black) .&. kings
           matchedKings = opponentKings .&. emptyBoardKingHops x y
           kingsCoords = bitmapToCoords matchedKings
-       in case kingsCoords of
-            (x, y):_ -> Just (x, y, ChessPiece opponentColor King)
-            _ -> Nothing
+       in (\(x, y) -> (x, y, ChessPiece opponentColor King)) <$> kingsCoords
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
 playerPotentiallyPinned board player =
@@ -752,7 +749,7 @@ playerInCheck board = playerInCheck' board (turn board)
 playerInCheck' :: ChessBoard -> PlayerColor -> Bool
 playerInCheck' board player =
   let (x, y) = playerKingPosition board player
-   in isJust $ squareThreatenedBy board player x y
+   in not $ null $ squareThreatenedBy board player x y
 
 {-# INLINE pawnCandidateMoves #-}
 pawnCandidateMoves :: ChessBoard -> Int -> Int -> PlayerColor -> [Move]
@@ -797,7 +794,7 @@ canCastleKingSide board color =
   let hasRights = if color == White then whiteKingCastle board else blackKingCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 6 y && squareEmpty board 7 y
-      travelsThroughCheck = any (\x' -> isJust $ squareThreatenedBy board color x' y) [5, 6, 7]
+      travelsThroughCheck = any (\x' -> not $ null $ squareThreatenedBy board color x' y) [5, 6, 7]
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
 {-# INLINE canCastleQueenSide #-}
@@ -806,7 +803,7 @@ canCastleQueenSide board color =
   let hasRights = if color == White then whiteQueenCastle board else blackQueenCastle board
       y = if color == White then 1 else 8
       hasEmptySpaces = squareEmpty board 2 y && squareEmpty board 3 y && squareEmpty board 4 y
-      travelsThroughCheck = any (\x' -> isJust $ squareThreatenedBy board color x' y) [3, 4, 5]
+      travelsThroughCheck = any (\x' -> not $ null $ squareThreatenedBy board color x' y) [3, 4, 5]
    in hasRights && hasEmptySpaces && not travelsThroughCheck
 
 {-# INLINE kingCandidateMoves #-}

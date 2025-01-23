@@ -179,14 +179,14 @@ staticExchangeEvalWinning board move =
                                                 _ -> error $ "SEE attempted in invalid position; board: " ++ (boardToFen board) ++ "; position: " ++ (show (x, y))
     see ::  ChessBoard -> Int
     see board = case squareThreatenedBy board (otherPlayer (turn board)) x y of
-                    Just (x', y', ChessPiece _ pieceType) ->
+                    (x', y', ChessPiece _ pieceType):_ ->
                         let captureMove = if pieceType == Pawn && (y == 1 || y == 8)
                                           then createMove x' y' x y PromoQueen
                                           else createMove x' y' x y NoPromo
                             newBoard = applyMoveUnsafe board captureMove
                             capturedValue = scoreUnderAttack x' y' board
                         in max 0 (capturedValue - see newBoard)
-                    Nothing -> 0
+                    [] -> 0
 
 horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
 horizonEval cache board alpha beta =

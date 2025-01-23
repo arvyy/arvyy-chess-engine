@@ -1,4 +1,5 @@
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE BangPatterns #-}
 
 module ChessEngine.HeuristicEvaluator (finalDepthEval, finalDepthEvalExplained) where
 
@@ -6,6 +7,10 @@ import ChessEngine.Board
 import ChessEngine.EvaluatorData
 import ChessEngine.Heatmaps
 import Data.Foldable
+import Data.List (nubBy, nub)
+import qualified Control.Foldl as Foldl
+import Data.List.Fusion.Probe (fuseThis)
+import GHC.List (build)
 
 evaluatePawns :: ChessCache -> ChessBoard -> IO Int
 evaluatePawns cache board = do
@@ -60,13 +65,20 @@ finalDepthEvalExplained board = do
 -- returns current value as negamax (ie, score is multipled for -1 if current player is black)
 finalDepthEval' :: (Monoid m) => (String -> m) -> ChessCache -> ChessBoard -> IO (PositionEval, m)
 finalDepthEval' infoConsumer cache board = do
-  let nonPawnScoreRaw = foldl' (\score piece -> score + scorePiece piece) 0 $ boardNonPawnPositions board
+  -- add special target move -1 -1 as a marker for piece itself, so that piece doesn't get lost in case it has no candidate moves
+  let piecesWithThreats = (boardNonPawnPositions board) >>= (\piece -> (\(x, y) -> (piece, x, y)) <$> (-1, -1) : pieceThreats board piece)
+  let (nonPawnScoreRaw, myKingScoreRaw, opponentKingScoreRaw) = Foldl.fold (joinFold3
+        (scorePiecesFold (turn board) board) 
+        (scoreKingSafetyFold board (turn board)) 
+        ((* (-1)) <$> scoreKingSafetyFold board (otherPlayer (turn board))))
+        piecesWithThreats
+  -- let nonPawnScoreRaw = foldl' (\score piece -> score + scorePiece piece) 0 $ piecesWithThreats
   let nonPawnScore = explain infoConsumer nonPawnScoreRaw "Non pawns"
   pawnScoreRaw <- (\value -> value * pieceMul White) <$> evaluatePawns cache board
   let pawnScore = explain infoConsumer pawnScoreRaw "Pawns"
-  let myKingScoreRaw = scoreKingSafety board (turn board)
+  -- let myKingScoreRaw = scoreKingSafety board (turn board) piecesWithThreats
   let myKingScore = explain infoConsumer myKingScoreRaw "My king safety score"
-  let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board)) * (-1)
+  -- let opponentKingScoreRaw = scoreKingSafety board (otherPlayer (turn board)) piecesWithThreats * (-1)
   let opponentKingScore = explain infoConsumer opponentKingScoreRaw "Opponent king safety score"
   let myConnectedRockScore = explain infoConsumer (scoreConnectedRocks board (turn board)) "My connected rock bonus"
   let opponentConnectedRockScore = explain infoConsumer ((-1) * scoreConnectedRocks board (otherPlayer (turn board))) "Opponent connected rock bonus"
@@ -88,25 +100,67 @@ finalDepthEval' infoConsumer cache board = do
     explain' :: (Monoid m) => (String -> m) -> (Int, m) -> String -> (Int, m)
     explain' infoConsumer (score, explanation) text = (score, explanation <> infoConsumer (text ++ ": " ++ (show score)))
 
-    scorePiece :: (Int, Int, ChessPiece) -> Int
-    scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece + scoreRockOnFile board piece) * pieceMul player
-    scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
+joinFold3 :: Foldl.Fold a r -> Foldl.Fold a r -> Foldl.Fold a r -> Foldl.Fold a (r, r, r)
+joinFold3 a b c =
+    let p1 = (,) <$> a <*> b
+        p2 = (\(v1, v2) v3 -> (v1, v2, v3)) <$> p1 <*> c
+    in p2
 
-scorePieceThreats :: ChessBoard -> (Int, Int, ChessPiece) -> Int
-scorePieceThreats board piece =
-  let isOwnSide y = case piece of
-        (_, _, ChessPiece White _) -> y < 5
+{-# INLINE foldDistinct #-}
+foldDistinct :: Eq e => (s -> e -> s) -> s -> Foldl.Fold e s
+foldDistinct folder init = 
+    Foldl.Fold (\(prev, state) el -> 
+                      let !newState = case prev of
+                                      Just el' | el' == el -> state
+                                      _ -> folder state el
+                      in (Just el, newState)) 
+                (Nothing, init)
+                (\(_, state) -> state)
+
+
+scorePiecesFold :: PlayerColor -> ChessBoard -> Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+scorePiecesFold player board = (+) <$> (scorePiecesBaseValueFold player board) <*> (scorePiecesThreatsFold player board)
+
+scorePiecesThreatsFold :: PlayerColor -> ChessBoard -> Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+scorePiecesThreatsFold player board = Foldl.Fold (\score el -> score + scorePieceThreat el) 0 id
+    where
+      scorePieceThreat ((_, _, ChessPiece color pieceType), (-1), (-1)) = 0 -- skip fake marker
+      scorePieceThreat ((_, _, ChessPiece color pieceType), x', y') =
+          let isOwnSide y = case color of
+                White -> y < 5
+                _ -> y > 4
+            in (4 + (if isOwnSide y' then 0 else 1) + (if x' > 1 && x' < 8 then 1 else 0)) * pieceMul color
+      pieceMul color = if color == player then 1 else -1
+
+scorePiecesBaseValueFold :: PlayerColor -> ChessBoard -> Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+scorePiecesBaseValueFold player board = 
+    --Foldl.premap (\(piece, _, _) -> piece) $ foldDistinct (\score piece -> score + scorePiece piece) 0
+    Foldl.Fold (\score (piece, x, y) -> if x == (-1) && y == (-1) then score + scorePiece piece else score) 0 id
+    where
+      scorePiece :: (Int, Int, ChessPiece) -> Int
+      scorePiece (piece@(_, _, ChessPiece player King)) = (0 + scorePiecePosition board piece) * pieceMul player
+      scorePiece (piece@(_, _, ChessPiece player Queen)) = (900 + scorePiecePosition board piece) * pieceMul player
+      scorePiece (piece@(_, _, ChessPiece player Bishop)) = (300 + scorePiecePosition board piece + scoreTrappedBishop board piece) * pieceMul player
+      scorePiece (piece@(_, _, ChessPiece player Horse)) = (300 + scorePiecePosition board piece + scoreTrappedHorse board piece) * pieceMul player
+      scorePiece (piece@(_, _, ChessPiece player Rock)) = (500 + scorePiecePosition board piece + scoreRockOnFile board piece) * pieceMul player
+      scorePiece _ = 0 -- pawns are scored separately
+
+      pieceMul color = if color == player then 1 else -1
+      
+
+{-
+scorePieceThreats :: PlayerColor -> [(Int, Int)] -> Int
+scorePieceThreats player threats =
+  let isOwnSide y = case player of
+        White -> y < 5
         _ -> y > 4
       mobilityScore =
         foldl'
           (\score (x, y) -> score + 4 + (if isOwnSide y then 0 else 1) + (if x > 1 && x < 8 then 1 else 0))
           0
-          (pieceThreats board piece)
+          threats
     in mobilityScore
+-}
 
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
@@ -200,13 +254,23 @@ scoreConnectedRocks board color =
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
-scoreKingSafety :: ChessBoard -> PlayerColor -> Int
-scoreKingSafety board player =
-  (floor $ (fromIntegral (scorePawnShield + scoreSurroundingOpenFiles)) * safetyMultiplier)
-    + scoreKingOnEdgeInEndgame
-    + scoreKingCloseToOpponentKingInWinningEndGame
+scoreKingSafetyFold :: ChessBoard -> PlayerColor -> Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+scoreKingSafetyFold board player =
+  {-
+  (\scoreSafetyBoxThreat -> 
+      (floor $ (fromIntegral (scorePawnShield + scoreSurroundingOpenFiles)) * safetyMultiplier)
+        + scoreSafetyBoxThreat 
+        + scoreKingOnEdgeInEndgame
+        + scoreKingCloseToOpponentKingInWinningEndGame
+  ) <$> scoreSafetyBoxThreatFold
+  -}
+  pure $ 
+      (floor $ (fromIntegral (scorePawnShield + scoreSurroundingOpenFiles)) * safetyMultiplier)
+        + scoreKingOnEdgeInEndgame
+        + scoreKingCloseToOpponentKingInWinningEndGame
   where
-    opponentMaterial = fromIntegral $ quickMaterialCount board (otherPlayer player)
+    opponentColor = otherPlayer player
+    opponentMaterial = fromIntegral $ quickMaterialCount board opponentColor
     myMaterial = fromIntegral $ quickMaterialCount board player
 
     (king_x, king_y) = playerKingPosition board player
@@ -225,13 +289,74 @@ scoreKingSafety board player =
             v2 = if (king_x < 8) then scoreOpenFile 8 else 0
             v3 = scoreOpenFile king_x
         in v1 + v2 + v3
+      where
+        scoreOpenFile  x =
+            let state = fileState board x (otherPlayer player)
+            in case state of
+                    OpenFile -> (-100)
+                    _ -> 0
 
-    scoreOpenFile :: Int -> Int
-    scoreOpenFile  x =
-        let state = fileState board x (otherPlayer player)
-        in case state of
-                OpenFile -> (-100)
-                _ -> 0
+    scoreSafetyBoxThreatFold :: Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+    scoreSafetyBoxThreatFold =
+        {-# SCC "m_scoreSafetyBoxThreat" #-}
+        {-
+        let squares = [(x, y) | x <- [king_x - 1 .. king_x + 1], y <- [king_y - 1 .. king_y + 1], inBounds x y && (x /= king_x || y /= king_y)]
+            threateners = concatMap (\(x, y) -> squareThreatenedBy board player x y) squares
+            threatenersCount = length $ nub threateners
+            threatScores = (\(_, _, ChessPiece _ pieceType) -> scoreThreatener pieceType) <$> threateners
+        in ((foldl' (+) 0 threatScores) * countMultiplier threatenersCount) `div` 100
+        -}
+
+        {-
+        let opponentThreats = filter (\((_, _, ChessPiece color _), _) -> color == opponentColor) piecesWithThreats
+            boxThreats = map (\((_, _, ChessPiece _ pieceType), threats) -> 
+                                        let boxThreats = filter squareInSafetyBox threats
+                                        in (pieceType, length boxThreats)) 
+                                   opponentThreats
+            threatenersCount = length boxThreats
+            threatScores = map (\(pieceType, count) -> scoreThreatener pieceType * count) boxThreats
+        in ((foldl' (+) 0 threatScores) * countMultiplier threatenersCount) `div` 100
+        -}
+        Foldl.prefilter relevantThreat $ finalScore <$> scoreThreatenerFold <*> countThreatenrsFold
+      where
+
+        countThreatenrsFold :: Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+        countThreatenrsFold =
+            {-
+            let countDistinct :: Foldl.Fold (Int, Int, ChessPiece) Int
+                countDistinct = foldDistinct (\count _ -> count + 1) 0
+            in Foldl.premap (\(piece, _, _) -> piece) countDistinct
+            -}
+            Foldl.Fold (\count (_, x, y) -> if x == (-1) && y == (-1) then count + 1 else count) 0 id
+
+        scoreThreatenerFold :: Foldl.Fold ((Int, Int, ChessPiece), Int, Int) Int
+        scoreThreatenerFold = Foldl.Fold (\score ((_, _, (ChessPiece _ pieceType)), _, _) -> score + scoreThreatener pieceType) 0 id
+        
+        finalScore :: Int -> Int -> Int
+        finalScore baseThreatScore attackerCount =
+            (baseThreatScore * countMultiplier attackerCount) `div` 100
+
+        relevantThreat :: ((Int, Int, ChessPiece), Int, Int) -> Bool
+        relevantThreat ((_, _, ChessPiece color _), x', y') = color /= player && squareInSafetyBox x' y'
+
+        squareInSafetyBox :: Int -> Int -> Bool
+        squareInSafetyBox x y = (abs (x - king_x) <= 1) && (abs (y - king_y) <= 1)
+        
+        scoreThreatener Horse = (-20)
+        scoreThreatener Bishop = (-20)
+        scoreThreatener Rock = (-40)
+        scoreThreatener Queen = (-80)
+        scoreThreatener _ = 0
+
+        countMultiplier count =
+            case count of
+                1 -> 0
+                2 -> 50
+                3 -> 75
+                4 -> 88
+                5 -> 94
+                6 -> 97
+                _ -> 99
 
 
     -- when this side is down to king, score it worse the closer it is to edge
