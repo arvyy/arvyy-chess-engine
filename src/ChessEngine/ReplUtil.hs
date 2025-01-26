@@ -10,6 +10,7 @@ import Data.List (intercalate)
 import Data.Bits (testBit)
 import ChessEngine.PositionEval
 import Data.IORef (newIORef)
+import ChessEngine.EvaluatorData (create)
 
 heuristicEvalExplainPosition :: String -> IO ()
 heuristicEvalExplainPosition fen = do
@@ -58,6 +59,7 @@ evalPosition fen = forM_ [3..10] printEvalForDepth
   where
     (board, _) = fromJust $ loadFen fen
     printEvalForDepth depth = do
+        cache <- create
         contextRef <- newIORef
                   EvaluationContext
                     { nodesParsed = 0,
@@ -68,5 +70,5 @@ evalPosition fen = forM_ [3..10] printEvalForDepth
                       workerThreadCount = 1,
                       latestEvaluationInfo = []
                     }
-        EvaluationContext { moves = move : _, evaluation = evaluation } <- evaluate contextRef board depth
+        EvaluationContext { moves = move : _, evaluation = evaluation } <- evaluate contextRef cache board depth
         putStrLn $ "Depth " ++ (show depth) ++ ", best move " ++ (show move) ++ ", eval " ++ (show evaluation)

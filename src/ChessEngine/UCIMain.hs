@@ -21,6 +21,7 @@ import Debug.Trace
 import System.Exit (exitSuccess)
 import System.IO
 import Control.DeepSeq (deepseq)
+import ChessEngine.EvaluatorData (ChessCache, create)
 
 -- TODO cleanup structure, separate persistent state (engineStateShowDebug) from others
 data EngineState = EngineState
@@ -31,11 +32,12 @@ data EngineState = EngineState
     workerThreadId :: Maybe ThreadId,
     killerThreadId :: Maybe ThreadId,
     engineStateShowDebug :: !Bool,
-    engineStateWorkerThreads :: !Int
+    engineStateWorkerThreads :: !Int,
+    cache :: !ChessCache
   }
 
-blank :: EngineState
-blank =
+blank :: ChessCache -> EngineState
+blank cache =
   EngineState
     { board = Nothing,
       evalTimeLimit = Nothing,
@@ -44,7 +46,8 @@ blank =
       workerThreadId = Nothing,
       killerThreadId = Nothing,
       engineStateShowDebug = False,
-      engineStateWorkerThreads = 1
+      engineStateWorkerThreads = 1,
+      cache = cache
     }
 
 main :: IO ()
@@ -53,7 +56,8 @@ main = do
   hSetBuffering stderr LineBuffering
   commandsBuffer <- newTChanIO
   forkIO $ bufferCommands commandsBuffer
-  stateRef <- newIORef blank
+  cache <- create
+  stateRef <- newIORef (blank cache)
   handleCommands commandsBuffer stateRef
 
 handleCommands :: TChan UCICommand -> IORef EngineState -> IO ()
@@ -135,7 +139,7 @@ doHandleCommand (Go props) stateRef now = do
   -- worker thread doing calculation
   workerThreadId' <- forkIO $ do
     let board' = fromJust $ board state
-    result <- evaluate evalResultRef board' depth'
+    result <- evaluate evalResultRef (cache state) board' depth'
     showBestMoveAndClear stateRef result
 
   -- killer thread killing on deadline

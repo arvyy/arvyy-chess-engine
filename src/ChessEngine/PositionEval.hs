@@ -24,7 +24,13 @@ import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe)
+import Control.Applicative
 import Debug.Trace (trace)
+
+traceIf test message value =
+    if test
+    then trace message value
+    else value
 
 type BestMove = (PositionEval, [Move])
 
@@ -94,13 +100,19 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             when (bound == LowerBound) $
               liftIO $
                 case moves' of
-                  move : _ -> unless (isJust $ getCaptureInfo board move) $ putKillerMove cache (ply, threadIndex) move
+                  move : _ -> do
+                    unless (isJust $ getCaptureInfo board move) $ do
+                        putKillerMove cache (ply, threadIndex) move
+                        case movePiece move <|> pieceOnSquare board (fromCol move) (fromRow move) of
+                            Just piece -> recordHistoricCut cache depth piece (fromCol move) (fromRow move) (toCol move) (toRow move)
+                            _ -> return ()
                   _ -> return ()
             liftIO $ putValue cache board depth eval' bound moves'
             let result = ((eval', moves'), nodes + 1)
             return result
       case tableHit of
-        Just (TranspositionValue bound eval cachedDepth bestMoveLine) ->
+        Just hit@(TranspositionValue bound eval cachedDepth bestMoveLine) ->
+          -- traceIf (ply == 0) (show hit) $
           if (cachedDepth < depth)
             then doSearch
             else
@@ -118,7 +130,16 @@ sortCandidates cache board ply threadIndex candidates =
     (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves candidates
     let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
     (killerMoves, otherMoves'') <- partitionKillerMoves otherMoves'
-    return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
+    -- TODO
+    sortedQuetMoves <- historicSort otherMoves''
+    -- let sortedQuetMoves = otherMoves''
+    let result = goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ sortedQuetMoves
+    {-
+    if (ply == 0)
+    then return $ trace (show $ length goodMovesFromCache) result
+    else return result
+    -}
+    return result
   where
     partitionAndSortCacheMoves :: [Move] -> IO ([Move], [Move])
     partitionAndSortCacheMoves moves = do
@@ -131,6 +152,22 @@ sortCandidates cache board ply threadIndex candidates =
     partitionKillerMoves moves = do
       killers <- getKillerMoves cache (ply, threadIndex)
       return $ partition (\m -> elem m killers) moves
+
+    getMoveHistoricValue :: Move -> IO Int
+    getMoveHistoricValue move =
+        let (x, y, x', y', _) = moveToTuple move
+        in case movePiece move of
+            Just piece -> getHistoricCut cache piece x y x' y'
+            _ -> return 0
+
+    historicSort :: [Move] -> IO [Move]
+    historicSort moves = do
+        augmentedMoves <- mapM (\move -> (\value -> (move, value)) <$> getMoveHistoricValue move) moves
+        let (historicGood, historicNeutral) = partition (\(_, v) -> v > 10) augmentedMoves
+        let comparator (_, v1) (_, v2) = compare v1 v2
+        let sortedHistoricGood = sortBy (flip comparator) historicGood
+        return $ fst <$> (sortedHistoricGood ++ historicNeutral)
+
 
 partitionAndSortCaptureMoves ::  ChessBoard ->  [Move] -> ([Move], [Move], [Move])
 partitionAndSortCaptureMoves board moves =
@@ -181,8 +218,8 @@ staticExchangeEvalWinning board move =
     see board = case squareThreatenedBy board (otherPlayer (turn board)) x y of
                     Just (x', y', ChessPiece _ pieceType) ->
                         let captureMove = if pieceType == Pawn && (y == 1 || y == 8)
-                                          then createMove x' y' x y PromoQueen
-                                          else createMove x' y' x y NoPromo
+                                          then createMove Nothing x' y' x y PromoQueen
+                                          else createMove Nothing x' y' x y NoPromo
                             newBoard = applyMoveUnsafe board captureMove
                             capturedValue = scoreUnderAttack x' y' board
                         in max 0 (capturedValue - see newBoard)
@@ -501,8 +538,8 @@ iterateM' f mx n = do
     then mx
     else iterateM' f (mx >>= f) (n - 1)
 
-evaluate :: IORef EvaluationContext -> ChessBoard -> Int -> IO EvaluationContext
-evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResultRef
+evaluate :: IORef EvaluationContext -> ChessCache -> ChessBoard -> Int -> IO EvaluationContext
+evaluate evalResultRef cache board targetDepth = runReaderT evaluateInReader evalResultRef
   where
     evaluateInReader :: App EvaluationContext
     evaluateInReader = do
@@ -524,6 +561,7 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
     startingDepth = 1
     firstEvaluation :: App (Int, (PositionEval, [Move]), ChessCache, Int)
     firstEvaluation = do
+      -- TODO remove to reuse cache between go commands
       cache <- liftIO create
       computeNext ((startingDepth - 1), (PositionEval 0, []), cache, 0)
 

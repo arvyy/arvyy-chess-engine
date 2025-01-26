@@ -8,12 +8,14 @@ import Data.Foldable
 import Data.IORef (newIORef)
 import Data.Maybe
 import Debug.Trace
+import ChessEngine.EvaluatorData (create)
 
 evalPosition :: String -> Int -> IO PositionEval
 evalPosition fen depth = do
   let (board, _) = fromJust $ loadFen fen
   resultRef <- newIORef EvaluationContext { workerThreadCount = 1, nodesParsed = 0, finished = False, evaluation = PositionEval 0, moves = [], showDebug = False, latestEvaluationInfo = []}
-  result <- evaluate resultRef board depth
+  cache <- create
+  result <- evaluate resultRef cache board depth
   return $ evaluation result
 
 countNodes fen depth =
