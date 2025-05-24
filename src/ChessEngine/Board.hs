@@ -73,6 +73,7 @@ import Control.Monad (foldM)
 import Control.Monad (msum)
 import Control.DeepSeq (NFData (..), deepseq, force)
 import qualified Data.IntMap.Strict as IntMap
+import qualified Data.Vector.Unboxed as VU
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -1233,7 +1234,7 @@ data MagicBitboard  = MagicBitboard
     { magicMul :: !Int64
     , magicShift :: !Int
     , mask :: !Int64
-    , boards :: IntMap.IntMap Int64
+    , boards :: VU.Vector Int64 --IntMap.IntMap Int64
     } deriving (Show)
 
 instance NFData MagicBitboard where
@@ -1282,15 +1283,15 @@ computeBishopMask blockerMask x y =
 {-# INLINE computeMagicBitboardKey #-}
 computeMagicBitboardKey :: Int64 -> Int64 -> Int -> Int64
 computeMagicBitboardKey blockBitmap magicMul magicShift =
-    blockBitmap
 {-
+    blockBitmap
+-}
     let blockBitmapW :: Word64
         blockBitmapW = fromIntegral blockBitmap
         magicMulW :: Word64
         magicMulW = fromIntegral magicMul
         !result = fromIntegral $ (blockBitmapW * magicMulW) `shiftR` magicShift
     in result
--}
 
 -- check if given magic numbers produce collisions;
 -- if not returns complete magic board
@@ -1298,16 +1299,21 @@ tryMagicNumbers :: Int -> Int -> Int64 -> Int -> Int64 -> (Int64 -> Int -> Int -
 tryMagicNumbers x y magicMul magicShift mask candidateMovesResolver =
     let possibleBlockBitmaps = permutateBits mask
     in case foldM step (Set.empty, []) possibleBlockBitmaps of
-        Just (_, computedValues) -> Just (MagicBitboard magicMul magicShift mask (IntMap.fromList computedValues))
+        Just (_, computedValues) -> Just (MagicBitboard magicMul magicShift mask (unboxedVectorFromList computedValues))
         _ -> Nothing
   where
-    step :: (Set.Set Int64, [(IntMap.Key, Int64)]) -> Int64 -> Maybe (Set.Set Int64, [(IntMap.Key, Int64)])
+    step :: (Set.Set Int64, [(Int, Int64)]) -> Int64 -> Maybe (Set.Set Int64, [(Int, Int64)])
     step (usedKeys, computedValues) blockBitmap =
         let !key = computeMagicBitboardKey blockBitmap magicMul magicShift --(abs (blockBitmap * magicMul)) `shiftR` magicShift
             !value = candidateMovesResolver blockBitmap x y
         in if Set.member key usedKeys
            then Nothing -- key was already placed, collision, abort
            else Just (Set.insert key usedKeys, (fromIntegral key, value):computedValues)
+    unboxedVectorFromList :: [(Int, Int64)] -> VU.Vector Int64
+    unboxedVectorFromList entries =
+        let base = VU.replicate (2 ^ 20) (0 :: Int64)
+        in base VU.// entries
+
 
 findMagicNumbers :: Int -> Int -> Int -> Int64 -> (Int64 -> Int -> Int -> Int64) -> MagicBitboard
 findMagicNumbers x y magicShift mask candidateMoveResolver =
@@ -1344,7 +1350,7 @@ magicCandidateMovesBitboard magicBitboards x y player ChessBoard { pieces =  Che
     let MagicBitboard { magicMul, magicShift, mask, boards } = magicBitboards ! (x, y)
         occupancy = mask .&. (white .|. black)
         key = computeMagicBitboardKey occupancy magicMul magicShift -- (abs (occupancy * magicMul)) `shiftR` magicShift
-        bitboard = (IntMap.!) boards (fromIntegral key)
+        bitboard = boards VU.! (fromIntegral key)
         myPieces = if player == White then white else black
     in bitboard .&. (complement myPieces)
 
