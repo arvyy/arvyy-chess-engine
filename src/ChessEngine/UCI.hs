@@ -11,6 +11,7 @@ import Control.Applicative
 import Data.List
 import Text.Read (readMaybe)
 import Text.Regex.PCRE
+import Control.Monad (foldM)
 
 data GoProps = GoProps
   { searchMoves :: ![Move],
@@ -126,7 +127,7 @@ parseUCICommand input
 
     tryParsePosition' ((posStart, posLen), (moveStart, moveLen)) = do
       let positionStr = take posLen $ drop posStart input
-      board <-
+      initialBoard <-
         if positionStr == "startpos"
           then Just initialBoard
           else
@@ -137,6 +138,12 @@ parseUCICommand input
             if moveLen == 0
               then []
               else words $ take moveLen $ drop moveStart input
-      moves <- sequence (map parseMove moveStrs)
+      {-
+      moves <- sequence (map (parseMove board) moveStrs)
       board <- foldl' (\maybeBoard move -> maybeBoard >>= (\board -> applyMove board move)) (Just board) moves
+      -}
+      board <- foldM (\board moveStr -> do {
+                        move <- parseMove board moveStr;
+                        applyMove board move
+                     }) initialBoard moveStrs
       return $ Position board

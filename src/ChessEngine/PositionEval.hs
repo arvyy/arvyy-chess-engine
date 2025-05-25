@@ -7,6 +7,9 @@ module ChessEngine.PositionEval
     evaluate,
     collectEvaluationInfo,
     EvaluationContext (..),
+
+    -- exports for testing
+    staticExchangeEvalWinning
   )
 where
 
@@ -23,7 +26,7 @@ import Data.Foldable (foldlM)
 import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Data.Maybe (isJust, isNothing, mapMaybe)
+import Data.Maybe (isJust, isNothing, mapMaybe, fromJust)
 import Debug.Trace (trace)
 
 type BestMove = (PositionEval, [Move])
@@ -94,7 +97,7 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             when (bound == LowerBound) $
               liftIO $
                 case moves' of
-                  move : _ -> unless (isJust $ getCaptureInfo board move) $ putKillerMove cache (ply, threadIndex) move
+                  move : _ -> unless (isJust $ getCaptureInfo move) $ putKillerMove cache (ply, threadIndex) move
                   _ -> return ()
             liftIO $ putValue cache board depth eval' bound moves'
             let result = ((eval', moves'), nodes + 1)
@@ -149,7 +152,7 @@ partitionAndSortCaptureMoves board moves =
     augmentWithCaptureInfo :: Move -> (Move, Maybe (Int, Int))
     augmentWithCaptureInfo move =
       let score = do
-            (capturingType, capturedType) <- getCaptureInfo board move
+            (capturingType, capturedType) <- getCaptureInfo move
             let sseScore = staticExchangeEvalWinning board move
             let captureDiffScore = captureScore capturedType - captureScore capturingType
             return (sseScore, captureDiffScore)
@@ -165,28 +168,32 @@ captureScore King = 9999
 
 staticExchangeEvalWinning ::  ChessBoard -> Move -> Int
 staticExchangeEvalWinning board move =
-  scoreUnderAttack (fromCol move) (fromRow move) board - see (applyMoveUnsafe board move)
+  let chessPiece = pieceOnSquare board x y
+      attackerPiece = pieceOnSquare board (fromCol move) (fromRow move)
+  in scoreUnderAttack chessPiece (fromCol move) (fromRow move) board - see (applyMoveUnsafe board move) attackerPiece
 
   where
     x = toCol move
     y = toRow move
-    scoreUnderAttack attackerX attackerY board = case pieceOnSquare board x y of
+    scoreUnderAttack maybeChessPiece attackerX attackerY board = case maybeChessPiece of
                                 Just (ChessPiece _ pieceType) -> captureScore pieceType
                                 -- when no piece is found and attacker is a pawn, assume it's first capture and it's an en pessant
                                 -- otherwise raise sanity error
                                 Nothing -> case pieceOnSquare board attackerX attackerY of
                                                 Just (ChessPiece _ Pawn) -> captureScore Pawn
                                                 _ -> error $ "SEE attempted in invalid position; board: " ++ (boardToFen board) ++ "; position: " ++ (show (x, y))
-    see ::  ChessBoard -> Int
-    see board = case squareThreatenedBy board (otherPlayer (turn board)) x y of
-                    Just (x', y', ChessPiece _ pieceType) ->
-                        let captureMove = if pieceType == Pawn && (y == 1 || y == 8)
-                                          then createMove x' y' x y PromoQueen
-                                          else createMove x' y' x y NoPromo
+    see :: ChessBoard -> Maybe ChessPiece -> Int
+    see board threatened = 
+        let threatener = squareThreatenedBy board (otherPlayer (turn board)) x y
+        in case (threatened, threatener) of
+                    (Just (ChessPiece _ threatenedType), Just (x', y', threatener@(ChessPiece _ threatenerType))) ->
+                        let captureMove = if threatenerType == Pawn && (y == 1 || y == 8)
+                                          then createMove x' y' x y PromoQueen (Just (threatenerType, threatenedType))
+                                          else createMove x' y' x y NoPromo (Just (threatenerType, threatenedType))
                             newBoard = applyMoveUnsafe board captureMove
-                            capturedValue = scoreUnderAttack x' y' board
-                        in max 0 (capturedValue - see newBoard)
-                    Nothing -> 0
+                            capturedValue = captureScore threatenedType
+                        in max 0 (capturedValue - see newBoard (Just threatener))
+                    _ -> 0
 
 horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
 horizonEval cache board alpha beta =
@@ -213,8 +220,8 @@ horizonEval cache board alpha beta =
     -- apply SEE, only consider winning exchanges
     deltaBuffer = 200
     examineCaptureMove pat move = 
-        case pieceOnSquare board (toCol move) (toRow move) of
-            Just (ChessPiece _ pieceType) -> 
+        case getCaptureInfo move of
+            Just (_, pieceType) -> 
                 evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha
                     && staticExchangeEvalWinning board move >= 0
             _ -> False
@@ -423,10 +430,10 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
         futilePrune =
           let isNotInCheck = not $ playerInCheck board
               doesNotGiveCheck = not $ playerInCheck candidateBoard
-              isNotCapture = isNothing $ getCaptureInfo board candidateMove
+              isNotCapture = isNothing $ getCaptureInfo candidateMove
               isNotPromo = promotion candidateMove == NoPromo
            in case futilityThreshold of
-                Just v -> siblingIndex > 0 && v < alpha && isNotPromo && isNotInCheck && doesNotGiveCheck && isNotCapture
+                Just v -> siblingIndex > 0 && v < alpha && isNotCapture && isNotPromo && isNotInCheck && doesNotGiveCheck
                 _ -> False
 
 isNullWindow :: PositionEval -> PositionEval -> Bool

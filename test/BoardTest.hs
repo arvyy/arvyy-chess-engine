@@ -64,6 +64,12 @@ prop_zebrahashconsistent =
 
 -- EXAMPLE TESTS --------------------------------------
 
+createBoard :: String -> ChessBoard
+createBoard fen =
+    let command = "position fen " ++ fen
+        Just (Position board) = parseUCICommand command
+    in board
+
 candidateExists :: String -> Move -> Bool
 candidateExists uci move =
   let Just (Position board) = parseUCICommand uci
@@ -79,6 +85,13 @@ testFusion = testCase "Test fusion" $ do
     (length $ fuseThis $ boardNonPawnPositions initialBoard) @?= 16
     (length $ fuseThis $ pieceThreats initialBoard (1, 2, (ChessPiece White Pawn))) @?= 1
 
+testSse :: TestTree
+testSse = testCase "Test sse" $ do
+    staticExchangeEvalWinning (createBoard "rnbqk2r/pppp1ppp/3b2n1/4p3/3PPB2/5N2/PPP2PPP/RN1QKB1R w KQkq - 3 5") (createMove 4 4 5 5 NoPromo (Just (Pawn, Pawn))) @?= 100
+    staticExchangeEvalWinning (createBoard "rnbqk1nr/pppp2pp/3b1p2/4p3/3PP3/5N2/PPP2PPP/RNBQKB1R w KQkq - 0 4") (createMove 4 4 5 5 NoPromo (Just (Pawn, Pawn))) @?= 0
+    staticExchangeEvalWinning (createBoard "rnbqkbnr/ppp2ppp/3p4/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3") (createMove 6 3 5 5 NoPromo (Just (Horse, Pawn))) @?= (-200)
+    
+
 unitTests =
   testGroup
     "Unit tests"
@@ -87,7 +100,7 @@ unitTests =
         parseUCICommand "quit" @?= Just Quit
         parseUCICommand "position startpos" @?= Just (Position initialBoard)
         parseUCICommand "position startpos moves" @?= Just (Position initialBoard)
-        parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (createMove 5 2 5 4 NoPromo))
+        parseUCICommand "position startpos moves e2e4" @?= fmap Position (applyMove initialBoard (createMove 5 2 5 4 NoPromo Nothing))
         parseUCICommand "go depth 6" @?= Just (Go emptyGoProps {depth = Just 6}),
       testCase "3fold detection" $
         let Just (Position board1) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6 a3b1 a6b8"
@@ -100,13 +113,14 @@ unitTests =
          in (isJust prev) @?= False,
       testCase "Candidates moves" $ do
         -- test en pessant works
-        candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (createMove 5 5 4 6 NoPromo) @?= True
+        candidateExists "position startpos moves e2e4 a7a5 e4e5 d7d5" (createMove 5 5 4 6 NoPromo (Just (Pawn, Pawn))) @?= True
         -- regression test, king trying to capture protected pieces
-        candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (createMove 5 3 6 3 NoPromo) @?= False
+        candidateExists "position fen 8/8/8/7p/1P2pB2/4Kb2/2k5/8 w - - 0 46" (createMove 5 3 6 3 NoPromo (Just (King, Bishop))) @?= False
         -- regression test, check if it knows how to promote with capture
-        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (createMove 4 7 3 8 PromoQueen) @?= True
+        candidateExists "position fen 2r3k1/3P1p2/5Bp1/8/4P3/5p2/3K3P/8 w - - 0 50" (createMove 4 7 3 8 PromoQueen (Just (Pawn, Rock))) @?= True
         -- regression test, check if king doesn't try to castle after having rook captured
-        candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo) @?= False,
+        candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo Nothing) @?= False
+        ,
       testCase "Precomputed rays" $ do
         elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True
         elem [(3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2)] (emptyBoardRockRays 2 2) @?= True
@@ -118,7 +132,8 @@ unitTests =
         elem [(3, 1)] (emptyBoardBishopRays 2 2) @?= True
         elem [(1, 3)] (emptyBoardBishopRays 2 2) @?= True,
 
-      testFusion
+      testFusion,
+      testSse
     ]
 
 return []
