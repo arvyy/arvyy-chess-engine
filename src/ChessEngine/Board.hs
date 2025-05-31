@@ -30,6 +30,7 @@ module ChessEngine.Board
     candidateMoveLegal,
     quickMaterialCount,
     quickPawnCount,
+    insufficientMaterial,
     is3foldRepetition,
     initialBoard,
     applyNullMove,
@@ -1252,7 +1253,19 @@ countPawnShield ChessBoard { pieces = ChessBoardPositions { white, black, pawns 
       matchedPawns = (if player == White then white else black) .&. pawns .&. shieldMask
   in popCount matchedPawns
 
-
+insufficientMaterial :: ChessBoard -> Bool
+insufficientMaterial board@ChessBoard{ pieces = ChessBoardPositions{ black, white, pawns, horses, bishops } } =
+    if pawns > 0
+    then False
+    else (blackMaterialCount <= 3 && whiteMaterialCount <= 3) || twoHorsesVsKing White || twoHorsesVsKing Black
+  where
+    twoHorsesVsKing color =
+        let (material, opponentMaterial) = if color == White then (whiteMaterialCount, blackMaterialCount) else (blackMaterialCount, whiteMaterialCount)
+            myPieces = if color == White then white else black
+        in opponentMaterial == 0 && material == 6 && (myPieces .&. horses) > 0 && (myPieces .&. bishops) == 0
+    blackMaterialCount = quickMaterialCount board Black
+    whiteMaterialCount = quickMaterialCount board White
+        
 
 
   ----------------- MAGIC TIME

@@ -81,7 +81,7 @@ type App = ReaderT (IORef EvaluationContext) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
 evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
-  if (is3foldRepetition board && ply > 0)
+  if ((is3foldRepetition board || insufficientMaterial board) && ply > 0)
     then return ((PositionEval 0, []), 0)
     else do
       let depth = max depth' 0
@@ -187,12 +187,14 @@ staticExchangeEvalWinning board move =
         let threatener = squareThreatenedBy board (otherPlayer (turn board)) x y
         in case (threatened, threatener) of
                     (Just (ChessPiece _ threatenedType), Just (x', y', threatener@(ChessPiece _ threatenerType))) ->
-                        let captureMove = if threatenerType == Pawn && (y == 1 || y == 8)
+                        let isPromotion = threatenerType == Pawn && (y == 1 || y == 8)
+                            captureMove = if isPromotion
                                           then createMove x' y' x y PromoQueen (Just (threatenerType, threatenedType))
                                           else createMove x' y' x y NoPromo (Just (threatenerType, threatenedType))
+                            promotionAdjustment = if isPromotion then 800 else 0
                             newBoard = applyMoveUnsafe board captureMove
                             capturedValue = captureScore threatenedType
-                        in max 0 (capturedValue - see newBoard (Just threatener))
+                        in max 0 (capturedValue + promotionAdjustment - see newBoard (Just threatener))
                     _ -> 0
 
 horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval

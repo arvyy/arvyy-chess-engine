@@ -71,7 +71,9 @@ finalDepthEval' infoConsumer cache board = do
   let myConnectedRockScore = explain infoConsumer (scoreConnectedRocks board (turn board)) "My connected rock bonus"
   let opponentConnectedRockScore = explain infoConsumer ((-1) * scoreConnectedRocks board (otherPlayer (turn board))) "Opponent connected rock bonus"
   let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore, myConnectedRockScore, opponentConnectedRockScore]) "Total result"
-  return (PositionEval evalScore, explanation)
+  if insufficientMaterial board
+  then return (PositionEval 0, infoConsumer "Insufficient material")
+  else return (PositionEval evalScore, explanation)
   where
     pieceMul color = if color == turn board then 1 else -1
 
