@@ -70,7 +70,9 @@ finalDepthEval' infoConsumer cache board = do
   let opponentKingScore = explain infoConsumer opponentKingScoreRaw "Opponent king safety score"
   let myConnectedRockScore = explain infoConsumer (scoreConnectedRocks board (turn board)) "My connected rock bonus"
   let opponentConnectedRockScore = explain infoConsumer ((-1) * scoreConnectedRocks board (otherPlayer (turn board))) "Opponent connected rock bonus"
-  let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore, myConnectedRockScore, opponentConnectedRockScore]) "Total result"
+  let myBishopPairScore = explain infoConsumer (scoreBishopPair board (turn board)) "My bishop pair bonus"
+  let opponentBishopPairScore = explain infoConsumer ((-1) * scoreBishopPair board (otherPlayer $ turn board)) "Opponent bishop pair bonus"
+  let (evalScore, explanation) = explain' infoConsumer (addScores [nonPawnScore, pawnScore, myKingScore, opponentKingScore, myConnectedRockScore, opponentConnectedRockScore, myBishopPairScore, opponentBishopPairScore]) "Total result"
   if insufficientMaterial board
   then return (PositionEval 0, infoConsumer "Insufficient material")
   else return (PositionEval evalScore, explanation)
@@ -199,6 +201,13 @@ scoreConnectedRocks board color =
                 points = (\x -> (x, y)) <$> [x1'..x2']
             in rangeEmpty points
         rangeEmpty points = all (\(x, y) -> squareEmpty board x y) points
+
+scoreBishopPair :: ChessBoard -> PlayerColor -> Int
+scoreBishopPair board color =
+    let bishopCount = length $ findPiecePositions board (ChessPiece color Bishop)
+    in if bishopCount == 2
+       then 40
+       else 0
 
 -- score relatively to given color
 -- score most likely to be negative, ie, penalty for lacking safety
