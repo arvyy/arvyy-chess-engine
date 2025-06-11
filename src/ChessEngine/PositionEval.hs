@@ -26,7 +26,7 @@ import Data.Foldable (foldlM)
 import Data.IORef
 import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import Data.Maybe (isJust, isNothing, mapMaybe, fromJust)
+import Data.Maybe (isJust, isNothing, mapMaybe, fromJust, fromMaybe)
 import Debug.Trace (trace)
 
 type BestMove = (PositionEval, [Move])
@@ -72,9 +72,7 @@ data CandidatesFold = CandidatesFold
     beta :: PositionEval,
     siblingIndex :: !Int,
     nodesParsed :: !Int,
-    -- Just only when depth = 1 or 2 for purposes of futility pruning
-    -- of non capturing moves when alpha is less than this value
-    futilityThreshold :: !(Maybe PositionEval)
+    futilityPruneContext :: !(Maybe (PositionEval, Int))
   }
 
 type App = ReaderT (IORef EvaluationContext) IO
@@ -183,7 +181,7 @@ staticExchangeEvalWinning board move =
                                                 Just (ChessPiece _ Pawn) -> captureScore Pawn
                                                 _ -> error $ "SEE attempted in invalid position; board: " ++ (boardToFen board) ++ "; position: " ++ (show (x, y))
     see :: ChessBoard -> Maybe ChessPiece -> Int
-    see board threatened = 
+    see board threatened =
         let threatener = squareThreatenedBy board (otherPlayer (turn board)) x y
         in case (threatened, threatener) of
                     (Just (ChessPiece _ threatenedType), Just (x', y', threatener@(ChessPiece _ threatenerType))) ->
@@ -221,9 +219,9 @@ horizonEval cache board alpha beta =
     -- apply "delta pruning", only consider captures where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
     -- apply SEE, only consider winning exchanges
     deltaBuffer = 200
-    examineCaptureMove pat move = 
+    examineCaptureMove pat move =
         case getCaptureInfo move of
-            Just (_, pieceType) -> 
+            Just (_, pieceType) ->
                 evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha
                     && staticExchangeEvalWinning board move >= 0
             _ -> False
@@ -281,8 +279,8 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
           (newNodesParsed, isCut) <- evaluateNullMove
           if isCut
             then return ((beta, []), newNodesParsed, LowerBound)
-            else foldCandidates
-        else foldCandidates
+            else pruneOrFoldCandidates
+        else pruneOrFoldCandidates
   where
     evaluateNullMove :: App (Int, Bool)
     evaluateNullMove = do
@@ -299,20 +297,33 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
         return ((negateEval v, moves), nodes)
       return (newNodesParsed, moveValue >= beta)
 
-    foldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
-    foldCandidates = do
-      -- if futilityThreshold < alpha, assume it the move has no practical chances of improving it
-      futilityThreshold <-
-        let margin = case depth of
-                        1 -> Just 100
-                        2 -> Just 200
-                        3 -> Just 400
-                        _ -> Nothing
-        in case margin of
-            Just n -> Just . (\eval -> evalAdd eval n) <$> (liftIO $ finalDepthEval cache board)
-            Nothing -> return Nothing
+    pruneOrFoldCandidates :: App ((PositionEval, [Move]), Int, TableValueBound)
+    pruneOrFoldCandidates = do
+      let futilityMargin = case depth of
+                            1 -> Just 100
+                            2 -> Just 200
+                            3 -> Just 400
+                            _ -> Nothing
+      case futilityMargin of
+        Just m -> do
+            staticEval <- liftIO $ finalDepthEval cache board
+            let reverseFutilePrune = shouldReversePrune staticEval m
+            if reverseFutilePrune
+            then return ((staticEval, []), nodesParsed, LowerBound)
+            else foldCandidates (Just (staticEval, m))
+        Nothing -> foldCandidates Nothing
 
-      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityThreshold = futilityThreshold}
+
+    shouldReversePrune :: PositionEval -> Int -> Bool
+    shouldReversePrune staticEval futilityMargin =
+      let isNotInCheck = not $ playerInCheck board
+      in if isNotInCheck
+          then evalAdd staticEval (- futilityMargin) > beta
+          else False
+
+    foldCandidates :: Maybe (PositionEval, Int) -> App ((PositionEval, [Move]), Int, TableValueBound)
+    foldCandidates futilityPruneContext = do
+      let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityPruneContext = futilityPruneContext }
       result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
       return $ case result of
         Left value -> value
@@ -322,18 +333,17 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             else (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
 
     foldCandidatesStep :: CandidatesFold -> (Move, ChessBoard) -> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
-    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue, alpha, beta, siblingIndex, nodesParsed, futilityThreshold} (candidateMove, candidateBoard)
+    foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue, alpha, beta, siblingIndex, nodesParsed, futilityPruneContext } (candidateMove, candidateBoard)
       | alpha >= beta = except $ Left (bestMoveValue, nodesParsed, LowerBound)
       | otherwise =
-          if futilePrune
-            then return candidatesFold {siblingIndex = (siblingIndex + 1)}
-            else
-              if tryNullWindow
-                then executeNullWindow tryLmr
-                else
-                  if (tryLmr && isNullWindow alpha beta)
-                    then executeLmr
-                    else executeDefault
+        if futilePrune futilityPruneContext
+        then return candidatesFold {siblingIndex = (siblingIndex + 1)}
+        else if tryNullWindow
+             then executeNullWindow tryLmr
+             else
+               if (tryLmr && isNullWindow alpha beta)
+                 then executeLmr
+                 else executeDefault
       where
 
         -- extend search by one in case of pawn promotion, pawn reaching second to last rank, or giivng check
@@ -428,15 +438,16 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
               executeDefault
             else return candidatesFold {siblingIndex = (siblingIndex + 1), nodesParsed = newNodesParsed}
 
-        futilePrune :: Bool
-        futilePrune =
-          let isNotInCheck = not $ playerInCheck board
-              doesNotGiveCheck = not $ playerInCheck candidateBoard
-              isNotCapture = isNothing $ getCaptureInfo candidateMove
-              isNotPromo = promotion candidateMove == NoPromo
-           in case futilityThreshold of
-                Just v -> siblingIndex > 0 && v < alpha && isNotCapture && isNotPromo && isNotInCheck && doesNotGiveCheck
-                _ -> False
+        futilePrune :: Maybe (PositionEval, Int) -> Bool
+        futilePrune futilityPruneContext =
+          case futilityPruneContext of
+            Just (staticEval, futilityMargin) ->
+              let isNotInCheck = not $ playerInCheck board
+                  doesNotGiveCheck = not $ playerInCheck candidateBoard
+                  isNotCapture = isNothing $ getCaptureInfo candidateMove
+                  isNotPromo = promotion candidateMove == NoPromo
+               in siblingIndex > 0 && (evalAdd staticEval futilityMargin) < alpha && isNotCapture && isNotPromo && isNotInCheck && doesNotGiveCheck
+            Nothing -> False
 
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1
