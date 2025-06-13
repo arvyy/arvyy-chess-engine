@@ -23,7 +23,7 @@ run-file:
 
 profile:
 	cabal build --enable-profiling --enable-library-profiling
-	bash -c "( cat profile_input.txt ; sleep 10 ; echo 'quit' ) | $$(cabal exec which chessengine_uci) +RTS -p"
+	bash -c "( cat profile_input.txt ; sleep 60 ; echo 'quit' ) | $$(cabal exec which chessengine_uci) +RTS -p"
 
 deploy:
 	cabal build

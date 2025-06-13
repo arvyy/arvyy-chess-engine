@@ -95,8 +95,8 @@ finalDepthEval' infoConsumer cache board = do
     scorePiece :: (Int, Int, ChessPiece) -> Int
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece + scoreUnprotectedMinorPiece board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece + scoreUnprotectedMinorPiece board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece + scoreRockOnFile board piece) * pieceMul player
     scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
@@ -115,7 +115,7 @@ scorePieceThreats board piece =
 -- score from position tables only
 scorePiecePosition :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
-  let squareRating = piecePositionBonus x y piece -- 0. - 1. rating, which needs to be first curved and then mapped onto range
+  let squareRating = (piecePositionBonus x y piece) -- 0. - 1. rating, which needs to be first curved and then mapped onto range
       maxBonus = case pieceType of
         King -> 50
         Bishop -> 20
@@ -125,6 +125,15 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
       score = squareRating * maxBonus
    in floor score
 
+scoreUnprotectedMinorPiece :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scoreUnprotectedMinorPiece board (x, y, piece) =
+    {- TODO currently loses elo when used
+    if squareProtected board piece x y
+    then 0
+    else (-30)
+    -}
+    0
+    
 -- penalize stupid horse being stuck at the opponent's edge and controlled by pawns
 scoreTrappedHorse :: ChessBoard -> (Int, Int, ChessPiece) -> Int
 scoreTrappedHorse board (8, 8, ChessPiece White Horse)

@@ -26,6 +26,7 @@ module ChessEngine.Board
     pieceOnSquare,
     squareEmpty,
     squareThreatenedBy,
+    squareProtected,
     pseudoLegalCandidateMoves,
     candidateMoveLegal,
     quickMaterialCount,
@@ -662,6 +663,13 @@ pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, Che
       bitboardMask = complement (if color == White then white else black)
       hops = baseHops .&. bitboardMask
    in bitmapToCoords hops
+
+{-# INLINE squareProtected #-}
+squareProtected :: ChessBoard -> ChessPiece -> Int -> Int -> Bool
+squareProtected board@ChessBoard { pieces, zebraHash } (ChessPiece player pieceType) x y =
+    let (zebraHash', pieces') = clearPosition zebraHash pieces x y player pieceType
+        board' = board { pieces = pieces', zebraHash = zebraHash' }
+    in isJust $ squareThreatenedBy board' player x y
 
 -- returns least valuable piece (so this function can be used in SEE) which threatens given square
 {-# INLINE squareThreatenedBy #-}
