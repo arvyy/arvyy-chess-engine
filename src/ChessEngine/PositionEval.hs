@@ -28,6 +28,10 @@ import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe, fromJust, fromMaybe)
 import Debug.Trace (trace)
+import qualified ChessEngine.MutableBuffer as MB
+import qualified Data.Vector.Strict as V
+import GHC.IO (unsafePerformIO)
+import ChessEngine.MutableBuffer (setBufferSize)
 
 type BestMove = (PositionEval, [Move])
 
@@ -51,7 +55,8 @@ data EvaluateParams = EvaluateParams
     allowNullMove :: !Bool,
     showUCIInfo :: !Bool,
     rootBoostCandidateIndex :: !([(Move, ChessBoard)] -> [(Move, ChessBoard)]), -- TODO rename field
-    threadIndex :: !Int
+    threadIndex :: !Int,
+    moveBuffers :: !(V.Vector (MB.MutableBuffer Move))
   }
 
 data EvaluationContext = EvaluationContext
@@ -78,20 +83,26 @@ data CandidatesFold = CandidatesFold
 type App = ReaderT (IORef EvaluationContext) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
-evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
+evaluate' cache params@EvaluateParams { board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply, moveBuffers } =
   if ((is3foldRepetition board || insufficientMaterial board) && ply > 0)
     then return ((PositionEval 0, []), 0)
     else do
       let depth = max depth' 0
       tableHit <- liftIO $ getValue cache board
       let doSearch = do
-            sortedCandidates <- liftIO $ sortCandidates cache board ply threadIndex (pseudoLegalCandidateMoves board)
+            let buffer = moveBuffers V.! ply
+            liftIO $ MB.reset buffer
+            liftIO $ MB.pushMany buffer $ pseudoLegalCandidateMoves board
+            liftIO $ sortCandidates cache board ply threadIndex buffer
+            {-
             let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
             let sortedCandidatesWithBoards' =
                   if ply == 0
                     then rootBoostCandidateIndex sortedCandidatesWithBoards
                     else sortedCandidatesWithBoards
-            ((eval', moves'), nodes, bound) <- evaluate'' cache params sortedCandidatesWithBoards'
+            -}
+            hasCandidates <- (> 0) <$> (liftIO $ MB.bufferSize buffer)
+            ((eval', moves'), nodes, bound) <- evaluate'' cache params buffer hasCandidates
             when (bound == LowerBound) $
               liftIO $
                 case moves' of
@@ -113,6 +124,51 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
                 else doSearch
         Nothing -> doSearch
 
+sortCandidates :: ChessCache -> ChessBoard -> Int -> Int -> MB.MutableBuffer Move -> IO ()
+sortCandidates cache board ply threadIndex candidates = do
+    partitionValidMoves
+    (_, otherMoves) <- partitionCacheMoves
+    (captures, otherMoves) <- partitionCaptures otherMoves
+    (winningCaptures, losingCaptures) <- partitionWinningCaptures captures
+    sortCaptures winningCaptures
+    sortCaptures losingCaptures
+    partitionKillerMoves otherMoves
+    return ()
+  where
+    
+    partitionValidMoves = do
+        ((_, end), _) <- MB.partition (\m -> isJust $ candidateMoveLegal board m) candidates
+        MB.setBufferSize candidates end
+
+    partitionCacheMoves = do
+      maybeCachedMove <- getValue cache board
+      case maybeCachedMove of
+        Just (TranspositionValue _ _ _ (move : _)) -> MB.partition (== move) candidates
+        _ -> do
+                r <- MB.range candidates
+                return ((0, 0), r)
+
+    partitionCaptures range = do
+        MB.partition' (\m -> isJust $ getCaptureInfo m) candidates range
+
+    partitionWinningCaptures range = do
+        MB.partition' (\m -> staticExchangeEvalWinning board m >= 0) candidates range
+
+    moveHasBetterCapture move1 move2 =
+        let (capturingType1, capturedType1) = fromJust $ getCaptureInfo move1
+            (capturingType2, capturedType2) = fromJust $ getCaptureInfo move2
+            captureDiffScore1 = captureScore capturedType1 - captureScore capturingType1
+            captureDiffScore2 = captureScore capturedType2 - captureScore capturingType2
+        in compare captureDiffScore1 captureDiffScore2
+            
+    sortCaptures range =
+        MB.sort (flip moveHasBetterCapture) candidates range
+
+    partitionKillerMoves range = do
+      killers <- getKillerMoves cache (ply, threadIndex)
+      MB.partition' (\m -> elem m killers) candidates range
+
+{-
 sortCandidates ::  ChessCache -> ChessBoard -> Int -> Int -> [Move] -> IO [Move]
 sortCandidates cache board ply threadIndex candidates =
   do
@@ -132,6 +188,7 @@ sortCandidates cache board ply threadIndex candidates =
     partitionKillerMoves moves = do
       killers <- getKillerMoves cache (ply, threadIndex)
       return $ partition (\m -> elem m killers) moves
+-}
 
 partitionAndSortCaptureMoves ::  ChessBoard ->  [Move] -> ([Move], [Move], [Move])
 partitionAndSortCaptureMoves board moves =
@@ -195,63 +252,119 @@ staticExchangeEvalWinning board move =
                         in max 0 (capturedValue + promotionAdjustment - see newBoard (Just threatener))
                     _ -> 0
 
-horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
-horizonEval cache board alpha beta =
+horizonEval ::  ChessCache -> V.Vector (MB.MutableBuffer Move) -> ChessBoard -> Int -> PositionEval -> PositionEval -> IO PositionEval
+horizonEval cache moveBuffers board ply alpha beta =
   {-# SCC "m_horizonEval" #-}
-  if playerInCheck board
-    then
-      {-# SCC "m_horizonEval_incheck" #-}
-      let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
-       in if (null moves)
-            then return $ outOfMovesEval board
-            else foldHorizonEval cache board moves alpha beta
-    else
-      {-# SCC "m_horizonEval_not_incheck" #-}
-      do
-        pat <- finalDepthEval cache board
-        let alpha' = max alpha pat
-        let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
-        if pat >= beta
-          then return pat
-          else foldHorizonEval cache board capturingMoves alpha' beta
+  do
+    let buffer = moveBuffers V.! ply
+    MB.reset buffer
+    MB.pushMany buffer $ pseudoLegalCandidateMoves board
+    filterValidMoves buffer
+    goodCapturesSize <- sortMoves buffer
+    hasCandidates <- (> 0) <$> (liftIO $ MB.bufferSize buffer)
+    if not hasCandidates
+    then return $ outOfMovesEval board
+    else if playerInCheck board
+          then
+            foldHorizonEval cache moveBuffers board buffer (const True) ply alpha beta
+            {-
+            {-# SCC "m_horizonEval_incheck" #-}
+            let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+             in if (null moves)
+                  then return $ outOfMovesEval board
+                  else foldHorizonEval cache board moves alpha beta
+            -}
+          else
+            do
+              setBufferSize buffer goodCapturesSize
+              pat <- finalDepthEval cache board
+              let alpha' = max alpha pat
+              if pat >= beta
+                then return pat
+                else foldHorizonEval cache moveBuffers board buffer (examineCaptureMove pat) ply alpha' beta
+            {-
+            {-# SCC "m_horizonEval_not_incheck" #-}
+            do
+              pat <- finalDepthEval cache board
+              let alpha' = max alpha pat
+              let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+              if pat >= beta
+                then return pat
+                else foldHorizonEval cache board capturingMoves alpha' beta
+            -}
   where
     -- examine only captures when not in check
     -- apply "delta pruning", only consider captures where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
     -- apply SEE, only consider winning exchanges
     deltaBuffer = 200
+    
+    {-
+    examineCaptureMove :: PositionEval -> Move -> Bool
     examineCaptureMove pat move =
         case getCaptureInfo move of
             Just (_, pieceType) ->
                 evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha
                     && staticExchangeEvalWinning board move >= 0
             _ -> False
+    -}
+    examineCaptureMove :: PositionEval -> Move -> Bool
+    examineCaptureMove pat move =
+        case getCaptureInfo move of
+            Just (_, pieceType) ->
+                evalAdd pat ((captureScore pieceType) + deltaBuffer) > alpha 
+            _ -> False
 
+    filterValidMoves moves = do
+        ((_, end), _) <- MB.partition (\m -> isJust $ candidateMoveLegal board m) moves
+        MB.setBufferSize moves end
+        
+
+    sortMoves moves = do
+        (captures, _) <- MB.partition (\m -> isJust $ getCaptureInfo m) moves
+        (goodCaptures@(_, goodCapturesEnd), badCaptures) <- MB.partition' (\m -> staticExchangeEvalWinning board m >= 0) moves captures
+        MB.sort (flip compareMoves) moves goodCaptures
+        MB.sort (flip compareMoves) moves badCaptures
+        return goodCapturesEnd
+      where
+        compareMoves move1 move2 =
+            let (capturingType1, capturedType1) = fromJust $ getCaptureInfo move1
+                (capturingType2, capturedType2) = fromJust $ getCaptureInfo move2
+                captureDiffScore1 = captureScore capturedType1 - captureScore capturingType1
+                captureDiffScore2 = captureScore capturedType2 - captureScore capturingType2
+            in compare captureDiffScore1 captureDiffScore2
+
+    {-
     sortMoves moves =
       let (goodCaptures, badCaptures, other) = partitionAndSortCaptureMoves board moves
        in goodCaptures ++ badCaptures ++ other
+    -}
 
-foldHorizonEval :: ChessCache -> ChessBoard -> [Move] -> PositionEval -> PositionEval -> IO PositionEval
-foldHorizonEval cache board moves alpha beta = do
-  result <- runExceptT $ foldlM foldStep (alpha, beta) moves
+foldHorizonEval :: ChessCache -> V.Vector (MB.MutableBuffer Move) -> ChessBoard -> MB.MutableBuffer Move -> (Move -> Bool) -> Int -> PositionEval -> PositionEval -> IO PositionEval
+foldHorizonEval cache moveBuffers board moves examineMove ply alpha beta = do
+  result <- runExceptT $ MB.fold foldStep (alpha, beta) moves
   return $ case result of
     Left value -> value
     Right (alpha, _) -> alpha
   where
     foldStep :: (PositionEval, PositionEval) -> Move -> ExceptT PositionEval IO (PositionEval, PositionEval)
-    foldStep (alpha, beta) move = do
-      value <- liftIO $ negateEval <$> horizonEval cache (applyMoveUnsafe board move) (negateEval beta) (negateEval alpha)
-      let alpha' = max alpha value
-      if value >= beta
-        then except $ Left value
-        else return (alpha', beta)
+    foldStep (alpha, beta) move = 
+        if examineMove move
+        then do
+          let board' = applyMoveUnsafe board move
+          value <- liftIO $ negateEval <$> horizonEval cache moveBuffers board' (ply + 1) (negateEval beta) (negateEval alpha)
+          let alpha' = max alpha value
+          if value >= beta
+            then except $ Left value
+            else return (alpha', beta)
+        else return (alpha, beta)
 
-evaluate'' :: ChessCache -> EvaluateParams -> [(Move, ChessBoard)] -> App (BestMove, Int, TableValueBound)
-evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove, showUCIInfo, threadIndex} candidates
-  | null candidates =
+evaluate'' :: ChessCache -> EvaluateParams -> MB.MutableBuffer Move -> Bool -> App (BestMove, Int, TableValueBound)
+evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board, nodesParsed, allowNullMove, showUCIInfo, threadIndex, moveBuffers } candidates hasCandidates
+  | not hasCandidates =
       let eval = outOfMovesEval board
        in return ((eval, []), nodesParsed, Exact)
   | depth <= 0 = do
-      eval <- liftIO $ horizonEval cache board alpha beta
+      eval <- liftIO $ horizonEval cache moveBuffers board ply alpha beta
       let bound =
             if eval <= alpha
               then UpperBound
@@ -288,6 +401,7 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
             params
               { allowNullMove = True,
                 depth = depth - 3,
+                ply = ply + 1,
                 board = applyNullMove board,
                 alpha = negateEval beta,
                 beta = negateEval alpha
@@ -324,13 +438,17 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
     foldCandidates :: Maybe (PositionEval, Int) -> App ((PositionEval, [Move]), Int, TableValueBound)
     foldCandidates futilityPruneContext = do
       let candidatesFold = CandidatesFold {raisedAlpha = False, bestMoveValue = (PositionEval $ (-10000), []), alpha = alpha, beta = beta, siblingIndex = 0, nodesParsed = nodesParsed, futilityPruneContext = futilityPruneContext }
-      result <- runExceptT $ foldlM foldCandidatesStep candidatesFold candidates
+      result <- runExceptT $ MB.fold foldCandidatesStep' candidatesFold candidates
       return $ case result of
         Left value -> value
         Right CandidatesFold {raisedAlpha, bestMoveValue, nodesParsed, alpha, beta} ->
           if alpha >= beta
             then (bestMoveValue, nodesParsed, LowerBound)
             else (bestMoveValue, nodesParsed, if raisedAlpha then Exact else UpperBound)
+
+    foldCandidatesStep' :: CandidatesFold -> Move -> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
+    foldCandidatesStep' fold move =
+        foldCandidatesStep fold (move, applyMoveUnsafe board move)
 
     foldCandidatesStep :: CandidatesFold -> (Move, ChessBoard) -> ExceptT (BestMove, Int, TableValueBound) App CandidatesFold
     foldCandidatesStep candidatesFold@CandidatesFold {raisedAlpha, bestMoveValue = bestMoveValue, alpha, beta, siblingIndex, nodesParsed, futilityPruneContext } (candidateMove, candidateBoard)
@@ -452,28 +570,29 @@ evaluate'' cache params@EvaluateParams {alpha, beta, depth, maxDepth, ply, board
 isNullWindow :: PositionEval -> PositionEval -> Bool
 isNullWindow (PositionEval alpha) (PositionEval beta) = (beta - alpha) <= 1
 
-evaluateIterationThread :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> ([(Move, ChessBoard)] -> [(Move, ChessBoard)]) -> Int -> App (BestMove, Int)
-evaluateIterationThread cache board lastDepthBest depth showDebug rootBoostCandidateIndex threadIndex =
-  let params =
-        EvaluateParams
-          { alpha = PositionEval (-10000),
-            beta = PositionEval 10000,
-            depth = depth,
-            maxDepth = depth,
-            ply = 0,
-            board = board,
-            nodesParsed = 0,
-            currentBest = lastDepthBest,
-            allowNullMove = True,
-            showUCIInfo = showDebug,
-            rootBoostCandidateIndex = rootBoostCandidateIndex,
-            threadIndex = threadIndex
-          }
-   in do
-        evaluate' cache params
+evaluateIterationThread :: ChessCache -> V.Vector (MB.MutableBuffer Move) -> ChessBoard -> (PositionEval, [Move]) -> Int -> Bool -> ([(Move, ChessBoard)] -> [(Move, ChessBoard)]) -> Int -> App (BestMove, Int)
+evaluateIterationThread cache moveBuffers board lastDepthBest depth showDebug rootBoostCandidateIndex threadIndex =
+  do
+    let params =
+          EvaluateParams
+            { alpha = PositionEval (-10000),
+              beta = PositionEval 10000,
+              depth = depth,
+              maxDepth = depth,
+              ply = 0,
+              board = board,
+              nodesParsed = 0,
+              currentBest = lastDepthBest,
+              allowNullMove = True,
+              showUCIInfo = showDebug,
+              rootBoostCandidateIndex = rootBoostCandidateIndex,
+              threadIndex = threadIndex,
+              moveBuffers = moveBuffers
+            }
+    evaluate' cache params
 
-evaluateIteration :: ChessCache -> ChessBoard -> (PositionEval, [Move]) -> Int -> Int -> Bool -> App (BestMove, Int)
-evaluateIteration cache board lastDepthBest depth nodes showDebug = do
+evaluateIteration :: ChessCache -> V.Vector (MB.MutableBuffer Move) -> ChessBoard -> (PositionEval, [Move]) -> Int -> Int -> Bool -> App (BestMove, Int)
+evaluateIteration cache moveBuffers board lastDepthBest depth nodes showDebug = do
   env <- ask
   context <- liftIO $ readIORef env
   let threadCount = workerThreadCount context
@@ -499,7 +618,7 @@ evaluateIteration cache board lastDepthBest depth nodes showDebug = do
                       then (rotate ((threadIndex - 1) * 2) xs) ++ rest
                       else candidates
 
-            evaluateIterationThread cache board lastDepthBest depth showDebug scrambleCandidates threadIndex
+            evaluateIterationThread cache moveBuffers board lastDepthBest depth showDebug scrambleCandidates threadIndex
         )
         evalResultRef
 
@@ -526,7 +645,10 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
   where
     evaluateInReader :: App EvaluationContext
     evaluateInReader = do
-      (_, (eval, moves), _, nodesParsed) <- iterateM' computeNext firstEvaluation (targetDepth - startingDepth)
+      moveBuffers <- do
+        buffersLst <- liftIO $ mapM (const MB.create) [0..100]
+        return $ V.fromList buffersLst
+      (_, (eval, moves), _, nodesParsed) <- iterateM' (computeNext moveBuffers) (firstEvaluation moveBuffers) (targetDepth - startingDepth)
       let lastEvalInfo = collectEvaluationInfo (turn board) nodesParsed eval moves
       env <- ask
       result' <- liftIO $ readIORef env
@@ -534,18 +656,18 @@ evaluate evalResultRef board targetDepth = runReaderT evaluateInReader evalResul
       liftIO $ writeIORef env result
       return result
 
-    computeNext :: (Int, BestMove, ChessCache, Int) -> App (Int, BestMove, ChessCache, Int)
-    computeNext current = do
+    computeNext :: V.Vector (MB.MutableBuffer Move) -> (Int, BestMove, ChessCache, Int) -> App (Int, BestMove, ChessCache, Int)
+    computeNext moveBuffers current = do
       let (depth, lastDepthBest, cache, nodesParsed) = current
       env <- ask
       result <- liftIO $ readIORef env
-      (thisDepthBest, nodesParsed) <- evaluateIteration cache board lastDepthBest (depth + 1) nodesParsed (showDebug result)
+      (thisDepthBest, nodesParsed) <- evaluateIteration cache moveBuffers board lastDepthBest (depth + 1) nodesParsed (showDebug result)
       return $ (depth + 1, thisDepthBest, cache, nodesParsed)
     startingDepth = 1
-    firstEvaluation :: App (Int, (PositionEval, [Move]), ChessCache, Int)
-    firstEvaluation = do
+    firstEvaluation :: V.Vector (MB.MutableBuffer Move) -> App (Int, (PositionEval, [Move]), ChessCache, Int)
+    firstEvaluation moveBuffers = do
       cache <- liftIO create
-      computeNext ((startingDepth - 1), (PositionEval 0, []), cache, 0)
+      computeNext moveBuffers ((startingDepth - 1), (PositionEval 0, []), cache, 0)
 
 collectEvaluationInfo :: PlayerColor -> Int -> PositionEval -> [Move] -> [String]
 collectEvaluationInfo player nodesParsed (PositionEval value) moves =

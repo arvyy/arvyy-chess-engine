@@ -24,14 +24,17 @@ common deps
      stm-containers >=1.2.1,
      tf-random >=0.5,
      random >=1.2,
-     vector >=0.13
+     vector >=0.13,
+     list-fusion-probe >=0.1.0.9,
+     primitive >=0.9.1.0
 
 
 library chess-internal
   import: deps
   default-language: Haskell2010
   hs-source-dirs: src
-  ghc-options: -Wall -threaded -funfolding-use-threshold=300 -fexpose-all-unfoldings -ddump-simpl -ddump-to-file
+  -- ghc-options: -Wall -threaded -funfolding-use-threshold=300 -fexpose-all-unfoldings -ddump-simpl -ddump-to-file
+  ghc-options: -Wall -threaded -funfolding-use-threshold=300 -fexpose-all-unfoldings
   exposed-modules: 
     ChessEngine.ReplUtil,
     ChessEngine.Heatmaps, 
@@ -42,6 +45,7 @@ library chess-internal
     ChessEngine.HeuristicEvaluator
     ChessEngine.PrecomputedCandidateMoves
     ChessEngine.TimeManager
+    ChessEngine.MutableBuffer
     
 executable chessengine_uci
   import: deps
@@ -73,6 +77,20 @@ test-suite board-tests
   import: deps
   type: exitcode-stdio-1.0
   main-is: BoardTest.hs
+  hs-source-dirs: test
+  default-language: Haskell2010
+  build-depends: 
+    chess-internal,
+    tasty >=1.4.3,
+    tasty-quickcheck >=0.10.2,
+    tasty-hunit >=0.10.0.3,
+    QuickCheck >=2.14.3,
+    list-fusion-probe >=0.1.0.9
+
+test-suite mutablebuffer-tests
+  import: deps
+  type: exitcode-stdio-1.0
+  main-is: MutableBufferTest.hs
   hs-source-dirs: test
   default-language: Haskell2010
   build-depends: 

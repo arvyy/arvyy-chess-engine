@@ -2,6 +2,10 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module ChessEngine.Board
   ( ChessPieceType (..),
@@ -75,7 +79,9 @@ import Control.Monad (foldM)
 import Control.Monad (msum)
 import Control.DeepSeq (NFData (..), deepseq, force)
 import qualified Data.IntMap.Strict as IntMap
-import qualified Data.Vector.Unboxed as VU
+import qualified Data.Vector.Generic         as VG
+import qualified Data.Vector.Generic.Mutable as VGM
+import qualified Data.Vector.Unboxed         as VU
 
 data ChessBoardPositions = ChessBoardPositions
   { black :: !Int64,
@@ -273,6 +279,13 @@ instance Show Move where
   show move@(Move bitRepr) = case moveToString move of
     Just str -> str
     _ -> "<Invalid move " ++ (show bitRepr) ++ ">"
+
+
+newtype instance VU.MVector s Move = MV_Int (VU.MVector s Int64)
+newtype instance VU.Vector    Move = V_Int  (VU.Vector    Int64)
+deriving instance VGM.MVector VU.MVector Move
+deriving instance VG.Vector   VU.Vector  Move
+instance VU.Unbox Move
 
 {-# INLINE createMove #-}
 createMove :: Int -> Int -> Int -> Int -> PromoChessPieceType -> Maybe (ChessPieceType, ChessPieceType) -> Move
