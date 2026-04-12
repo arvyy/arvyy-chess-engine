@@ -55,14 +55,13 @@ module ChessEngine.Board
   )
 where
 
-import ChessEngine.PrecomputedCandidateMoves
 import Data.Array.IArray
 import Data.Bits
 import Data.Char
 import Data.Foldable (find, foldl', foldlM)
 import Data.Hashable
 import Data.Int (Int64)
-import Data.List (unfoldr, intercalate)
+import Data.List (unfoldr)
 import Data.Maybe
 import Data.Word (Word64)
 import GHC.Generics (Generic)
@@ -71,10 +70,8 @@ import System.Random.TF (mkTFGen)
 import Text.Read (readMaybe)
 import Control.Applicative
 import qualified Data.Set as Set
-import Control.Monad (foldM)
-import Control.Monad (msum)
+import Control.Monad (msum, foldM)
 import Control.DeepSeq (NFData (..), deepseq, force)
-import qualified Data.IntMap.Strict as IntMap
 import qualified Data.Vector.Unboxed as VU
 
 data ChessBoardPositions = ChessBoardPositions
@@ -665,11 +662,11 @@ pieceThreats ChessBoard {pieces = ChessBoardPositions {white, black}} (x, y, Che
    in bitmapToCoords hops
 
 {-# INLINE squareProtected #-}
-squareProtected :: ChessBoard -> ChessPiece -> Int -> Int -> Bool
+squareProtected :: ChessBoard -> ChessPiece -> Int -> Int -> Maybe ChessPieceType
 squareProtected board@ChessBoard { pieces, zebraHash } (ChessPiece player pieceType) x y =
     let (zebraHash', pieces') = clearPosition zebraHash pieces x y player pieceType
         board' = board { pieces = pieces', zebraHash = zebraHash' }
-    in isJust $ squareThreatenedBy board' player x y
+    in (\(_, _, ChessPiece _ t) -> t) <$> squareThreatenedBy board' (otherPlayer player) x y
 
 -- returns least valuable piece (so this function can be used in SEE) which threatens given square
 {-# INLINE squareThreatenedBy #-}
@@ -741,33 +738,14 @@ squareThreatenedBy board@ChessBoard {pieces = ChessBoardPositions {pawns, horses
             _ -> Nothing
 
 playerPotentiallyPinned :: ChessBoard -> PlayerColor -> Bool
-playerPotentiallyPinned board player =
-  any (\ray -> checkRayPin ray False [Queen, Bishop]) (emptyBoardBishopRays x y)
-    || any (\ray -> checkRayPin ray False [Queen, Rock]) (emptyBoardRockRays x y)
-  where
-    opponentColor = if player == White then Black else White
-    (x, y) = playerKingPosition board player
-
-    checkRayPin :: [(Int, Int)] -> Bool -> [ChessPieceType] -> Bool
-    checkRayPin moves ownPieceSeen pinnerTypes =
-      case foldlM foldStepper ownPieceSeen moves of
-        Right _ -> False
-        Left v -> v
-      where
-        foldStepper ownPieceSeen (x, y) =
-          let ownPiece = isPlayerOnSquare board player x y
-              opponentPiece = isPlayerOnSquare board opponentColor x y
-           in if not ownPiece && not opponentPiece
-                then Right ownPieceSeen
-                else
-                  if ownPieceSeen && opponentPiece && case pieceOnSquare board x y of
-                    Just (ChessPiece color pieceType) -> color == opponentColor && elem pieceType pinnerTypes
-                    _ -> False
-                    then Left True
-                    else
-                      if not ownPieceSeen && ownPiece
-                        then Right True
-                        else Left False
+playerPotentiallyPinned board@ChessBoard{ pieces = ChessBoardPositions { white, black, bishops, queens, rocks }} player =
+  let opponent = if otherPlayer player == Black then black else white
+      opponentQueenAndBishop = (bishops .|. queens) .&. opponent
+      opponentQueenAndRock = (rocks .|. queens) .&. opponent
+      (kingX, kingY) = playerKingPosition board player
+      kingRockThreat = magicCandidateMovesBitboard' rockMagicBitboards kingX kingY 0 opponent
+      kingBishopThreat = magicCandidateMovesBitboard' bishopMagicBitboards kingX kingY 0 opponent
+  in (opponentQueenAndRock .&. kingRockThreat /= 0) || (opponentQueenAndBishop .&. kingBishopThreat /= 0)
 
 {-# INLINE playerInCheck #-}
 playerInCheck :: ChessBoard -> Bool
@@ -866,16 +844,15 @@ pseudoLegalCandidateMoves board =
 -- returns just if given candidate is legal, empty otherwise
 -- (candidate can be illegal because pseudoLegalCandidateMoves returns pseudolegal moves)
 {-# INLINE candidateMoveLegal #-}
-candidateMoveLegal :: ChessBoard -> Move -> Maybe ChessBoard
-candidateMoveLegal board candidate =
+candidateMoveLegal :: ChessBoard -> Bool -> Move -> Maybe ChessBoard
+candidateMoveLegal board wasInCheck candidate =
   let board' = applyMoveUnsafe board candidate
-      inCheck = (wasInCheck || (wasPotentiallyPinned && movePotentiallyBreakingPin) || isKingMove) && playerInCheck' board' player
+      inCheck = (wasInCheck || isKingMove || (movePotentiallyBreakingPin && wasPotentiallyPinned)) && playerInCheck' board' player
    in if not inCheck
         then return board'
         else Nothing
   where
     player = turn board
-    wasInCheck = playerInCheck board
     wasPotentiallyPinned = playerPotentiallyPinned board player
     (king_x, king_y) = playerKingPosition board player
     squarePotentiallyUnderPin x y =
@@ -883,10 +860,10 @@ candidateMoveLegal board candidate =
         || x == king_x
         || abs (y - king_y) == abs (x - king_x)
     -- en pessent move might clear a pin held by opponent's pawn
-    isEnPassant = hasPieceOnSquare board (fromCol candidate) (fromRow candidate) (ChessPiece player Pawn) && (fromCol candidate) /= (toCol candidate)
+    -- isEnPassant = hasPieceOnSquare board (fromCol candidate) (fromRow candidate) (ChessPiece player Pawn) && (fromCol candidate) /= (toCol candidate)
     movePotentiallyBreakingPin = 
         squarePotentiallyUnderPin (fromCol candidate) (fromRow candidate)
-        || (isEnPassant && (squarePotentiallyUnderPin (toCol candidate) (fromRow candidate)))
+        -- || ((squarePotentiallyUnderPin (toCol candidate) (fromRow candidate)) && isEnPassant)
     isKingMove =
       fromRow candidate == king_y && fromCol candidate == king_x
 
@@ -898,9 +875,10 @@ applyNullMove board@ChessBoard{ zebraHash, turn } =
 
 applyMove :: ChessBoard -> Move -> Maybe ChessBoard
 applyMove board move = do
+  let wasInCheck = playerInCheck board
   let candidates = pseudoLegalCandidateMoves board
   matchedCandidate <- find (\move' -> move' == move) candidates
-  candidateMoveLegal board matchedCandidate
+  candidateMoveLegal board wasInCheck matchedCandidate
 
 -- return Just (capturingType, capturedType) if this is capture
 -- Nothing otherwise
@@ -1392,11 +1370,16 @@ bishopMagicBitboards =
 {-# INLINE magicCandidateMovesBitboard #-}
 magicCandidateMovesBitboard :: Array (Int, Int) MagicBitboard -> Int -> Int -> PlayerColor -> ChessBoard -> Int64
 magicCandidateMovesBitboard magicBitboards x y player ChessBoard { pieces =  ChessBoardPositions { white, black } } =
+    let (myPieces, opponentPieces) = if player == White then (white, black) else (black, white)
+    in magicCandidateMovesBitboard' magicBitboards x y myPieces opponentPieces
+    
+{-# INLINE magicCandidateMovesBitboard' #-}
+magicCandidateMovesBitboard' :: Array (Int, Int) MagicBitboard -> Int -> Int -> Int64 -> Int64 -> Int64
+magicCandidateMovesBitboard' magicBitboards x y myPieces opponentPieces =
     let MagicBitboard { magicMul, magicShift, mask, boards } = magicBitboards ! (x, y)
-        occupancy = mask .&. (white .|. black)
+        occupancy = mask .&. (myPieces .|. opponentPieces)
         key = computeMagicBitboardKey occupancy magicMul magicShift -- (abs (occupancy * magicMul)) `shiftR` magicShift
         bitboard = boards VU.! (fromIntegral key)
-        myPieces = if player == White then white else black
     in bitboard .&. (complement myPieces)
 
 {-# INLINE rockCandidateMoves #-}

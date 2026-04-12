@@ -2,7 +2,6 @@ module Main where
 
 import ChessEngine.Board
 import ChessEngine.PositionEval
-import ChessEngine.PrecomputedCandidateMoves
 import ChessEngine.UCI
 import Control.Monad
 import Data.Foldable
@@ -32,7 +31,8 @@ countNodes board depth
   | depth == 0 = 1
   | otherwise =
       let candidates = pseudoLegalCandidateMoves board
-          validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board candidate) candidates
+          wasInCheck = playerInCheck board
+          validCandidates = filter (\candidate -> isJust $ candidateMoveLegal board wasInCheck candidate) candidates
           countCandidates count move = count + countNodes (applyMoveUnsafe board move) (depth - 1)
        in foldl' countCandidates 0 validCandidates
 

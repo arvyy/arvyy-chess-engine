@@ -86,7 +86,8 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
       tableHit <- liftIO $ getValue cache board
       let doSearch = do
             sortedCandidates <- liftIO $ sortCandidates cache board ply threadIndex (pseudoLegalCandidateMoves board)
-            let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board move) sortedCandidates
+            let wasInCheck = playerInCheck board
+            let sortedCandidatesWithBoards = mapMaybe (\move -> (\board' -> (move, board')) <$> candidateMoveLegal board wasInCheck move) sortedCandidates
             let sortedCandidatesWithBoards' =
                   if ply == 0
                     then rootBoostCandidateIndex sortedCandidatesWithBoards
@@ -195,13 +196,13 @@ staticExchangeEvalWinning board move =
                         in max 0 (capturedValue + promotionAdjustment - see newBoard (Just threatener))
                     _ -> 0
 
-horizonEval ::  ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
+horizonEval :: ChessCache -> ChessBoard -> PositionEval -> PositionEval -> IO PositionEval
 horizonEval cache board alpha beta =
   {-# SCC "m_horizonEval" #-}
-  if playerInCheck board
+  if wasInCheck
     then
       {-# SCC "m_horizonEval_incheck" #-}
-      let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+      let moves = sortMoves $ (filter (\move -> (isJust $ candidateMoveLegal board wasInCheck move)) (pseudoLegalCandidateMoves board))
        in if (null moves)
             then return $ outOfMovesEval board
             else foldHorizonEval cache board moves alpha beta
@@ -210,11 +211,12 @@ horizonEval cache board alpha beta =
       do
         pat <- finalDepthEval cache board
         let alpha' = max alpha pat
-        let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board move)) (pseudoLegalCandidateMoves board))
+        let capturingMoves = sortMoves $ (filter (\move -> (examineCaptureMove pat move) && (isJust $ candidateMoveLegal board wasInCheck move)) (pseudoLegalCandidateMoves board))
         if pat >= beta
           then return pat
           else foldHorizonEval cache board capturingMoves alpha' beta
   where
+    wasInCheck = playerInCheck board
     -- examine only captures when not in check
     -- apply "delta pruning", only consider captures where captured piece + buffer > alpha (buffer recommended to be 200 centipawns)
     -- apply SEE, only consider winning exchanges

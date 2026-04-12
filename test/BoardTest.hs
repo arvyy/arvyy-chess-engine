@@ -5,7 +5,6 @@ module Main where
 
 import ChessEngine.Board
 import ChessEngine.PositionEval
-import ChessEngine.PrecomputedCandidateMoves
 import ChessEngine.UCI
 import Data.Maybe
 import Debug.Trace
@@ -17,8 +16,9 @@ import Data.List.Fusion.Probe (fuseThis)
 
 candidateMoves board = mapMaybe mapper $ pseudoLegalCandidateMoves board
   where
+    wasInCheck = playerInCheck board
     mapper move = do
-      board' <- candidateMoveLegal board move
+      board' <- candidateMoveLegal board wasInCheck move
       return (move, board')
 
 -- makes random valid move or returns itself if no moves available
@@ -121,16 +121,6 @@ unitTests =
         -- regression test, check if king doesn't try to castle after having rook captured
         candidateExists "position startpos moves g1f3 g8h6 f3e5 g7g6 e5g6 f8g7 g6h8" (createMove 5 8 7 8 NoPromo Nothing) @?= False
         ,
-      testCase "Precomputed rays" $ do
-        elem [(1, 2)] (emptyBoardRockRays 2 2) @?= True
-        elem [(3, 2), (4, 2), (5, 2), (6, 2), (7, 2), (8, 2)] (emptyBoardRockRays 2 2) @?= True
-        elem [(2, 1)] (emptyBoardRockRays 2 2) @?= True
-        elem [(2, 3), (2, 4), (2, 5), (2, 6), (2, 7), (2, 8)] (emptyBoardRockRays 2 2) @?= True
-
-        elem [(1, 1)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(3, 1)] (emptyBoardBishopRays 2 2) @?= True
-        elem [(1, 3)] (emptyBoardBishopRays 2 2) @?= True,
 
       testFusion,
       testSse

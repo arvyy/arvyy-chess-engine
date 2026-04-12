@@ -40,7 +40,6 @@ library chess-internal
     ChessEngine.UCI,
     ChessEngine.EvaluatorData,
     ChessEngine.HeuristicEvaluator
-    ChessEngine.PrecomputedCandidateMoves
     ChessEngine.TimeManager
     
 executable chessengine_uci

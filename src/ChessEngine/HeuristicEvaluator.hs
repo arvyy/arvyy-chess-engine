@@ -95,8 +95,8 @@ finalDepthEval' infoConsumer cache board = do
     scorePiece :: (Int, Int, ChessPiece) -> Int
     scorePiece piece@(_, _, ChessPiece player King) = (0 + scorePiecePosition board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Queen) = (900 + scorePieceThreats board piece + scorePiecePosition board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece + scoreUnprotectedMinorPiece board piece) * pieceMul player
-    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece + scoreUnprotectedMinorPiece board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Bishop) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedBishop board piece + scoreMinorPieceProtection board piece) * pieceMul player
+    scorePiece piece@(_, _, ChessPiece player Horse) = (300 + scorePieceThreats board piece + scorePiecePosition board piece + scoreTrappedHorse board piece + scoreMinorPieceProtection board piece) * pieceMul player
     scorePiece piece@(_, _, ChessPiece player Rock) = (500 + scorePieceThreats board piece + scorePiecePosition board piece + scoreRockOnFile board piece) * pieceMul player
     scorePiece (_, _, ChessPiece _ Pawn) = 0 -- pawns are scored separately
 
@@ -125,12 +125,15 @@ scorePiecePosition _ (x, y, piece@(ChessPiece _ pieceType)) =
       score = squareRating * maxBonus
    in floor score
 
-scoreUnprotectedMinorPiece :: ChessBoard -> (Int, Int, ChessPiece) -> Int
-scoreUnprotectedMinorPiece board (x, y, piece) =
-    {- TODO currently loses elo when used
-    if squareProtected board piece x y
-    then 0
-    else (-30)
+scoreMinorPieceProtection :: ChessBoard -> (Int, Int, ChessPiece) -> Int
+scoreMinorPieceProtection board (x, y, piece@(ChessPiece _ t)) =
+    -- TODO
+    -- currently doesn't improve strength
+    {-
+    case squareProtected board piece x y of
+        Just Pawn | t == Horse -> 10
+        Just _ -> 0
+        Nothing -> (-10)
     -}
     0
     

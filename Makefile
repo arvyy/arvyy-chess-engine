@@ -17,6 +17,13 @@ sprt:
 	(PWD=$$(pwd) ; cd ${ENGINE2_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE2)
 	${FAST_CHESS_EXE} -log file=sprt.log level=trace -pgnout file=games.pgn -engine cmd=ENGINE1 name=ENGINE1 -engine cmd=ENGINE2 name=ENGINE2 -each tc=10+0.1 -rounds 3000 -repeat -concurrency 2 -randomseed -openings file=8moves_v3.pgn format=pgn -sprt elo0=0 elo1=10 alpha=0.2 beta=0.2
 
+sprt-regression:
+	rm -f ENGINE1
+	rm -f ENGINE2
+	(PWD=$$(pwd) ; cd ${ENGINE1_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE1)
+	(PWD=$$(pwd) ; cd ${ENGINE2_DIR} ; cabal build ; echo "Built engine at $$(cabal exec which chessengine_uci)" ; cp $$(cabal exec which chessengine_uci) ${PWD}/ENGINE2)
+	${FAST_CHESS_EXE} -log file=sprt.log level=trace -pgnout file=games.pgn -engine cmd=ENGINE1 name=ENGINE1 -engine cmd=ENGINE2 name=ENGINE2 -each tc=10+0.1 -rounds 3000 -repeat -concurrency 2 -randomseed -openings file=8moves_v3.pgn format=pgn -sprt elo0=-10 elo1=0 alpha=0.2 beta=0.2
+
 run-file:
 	cabal build
 	bash -c "( cat testinput.txt ; sleep 10 ; echo 'quit' ) | $$(cabal exec which chessengine_uci)"
