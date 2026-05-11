@@ -1,9 +1,10 @@
 module Main where
 
 import ChessEngine.Board
-import ChessEngine.PositionEval
+import qualified ChessEngine.PositionEval as PE
 import ChessEngine.TimeManager
 import ChessEngine.UCI
+import qualified ChessEngine.EvaluatorData as ED
 import Control.Applicative (Alternative ((<|>)))
 import Control.Concurrent
 import Control.Concurrent.STM.TChan
@@ -21,22 +22,25 @@ import Debug.Trace
 import System.Exit (exitSuccess)
 import System.IO
 import Control.DeepSeq (deepseq)
+import ChessEngine.EvaluatorData (ChessCache)
 
 -- TODO cleanup structure, separate persistent state (engineStateShowDebug) from others
 data EngineState = EngineState
   { board :: !(Maybe ChessBoard),
     evalTimeLimit :: !(Maybe UTCTime),
     evalNodeLimit :: !(Maybe Int),
-    result :: !(Maybe (IORef EvaluationContext)),
+    result :: !(Maybe (IORef PE.EvaluationContext)),
     workerThreadId :: Maybe ThreadId,
     killerThreadId :: Maybe ThreadId,
     engineStateShowDebug :: !Bool,
-    engineStateWorkerThreads :: !Int
+    engineStateWorkerThreads :: !Int,
+    chessCache :: !ChessCache
   }
 
-blank :: EngineState
-blank =
-  EngineState
+blank :: IO EngineState
+blank = do
+  cache <- ED.create
+  return EngineState
     { board = Nothing,
       evalTimeLimit = Nothing,
       evalNodeLimit = Nothing,
@@ -44,7 +48,8 @@ blank =
       workerThreadId = Nothing,
       killerThreadId = Nothing,
       engineStateShowDebug = False,
-      engineStateWorkerThreads = 1
+      engineStateWorkerThreads = 1,
+      chessCache = cache
     }
 
 main :: IO ()
@@ -53,7 +58,8 @@ main = do
   hSetBuffering stderr LineBuffering
   commandsBuffer <- newTChanIO
   forkIO $ bufferCommands commandsBuffer
-  stateRef <- newIORef blank
+  blank' <- blank
+  stateRef <- newIORef blank'
   handleCommands commandsBuffer stateRef
 
 handleCommands :: TChan UCICommand -> IORef EngineState -> IO ()
@@ -101,6 +107,11 @@ doHandleCommand (SetOption "threads" (Just n)) stateRef _ = do
   state <- readIORef stateRef
   let state' = state {engineStateWorkerThreads = threadCount}
   writeIORef stateRef state'
+doHandleCommand (UCINewGame) stateRef _ = do
+    cache <- ED.create
+    state <- readIORef stateRef
+    let state' = state { chessCache = cache }
+    writeIORef stateRef state'
 doHandleCommand (Position board') stateRef _ = do
   state <- readIORef stateRef
   let state' = state {board = Just board'}
@@ -120,22 +131,24 @@ doHandleCommand (Go props) stateRef now = do
         if infinite props
           then Nothing
           else explicitDeadline <|> implicitDeadline
-  evalResultRef <-
+  evalResultRef <- do
+    state <- readIORef stateRef
     newIORef
-      EvaluationContext
-        { nodesParsed = 0,
-          finished = False,
-          evaluation = PositionEval 0,
-          moves = [],
-          showDebug = (engineStateShowDebug state),
-          workerThreadCount = (engineStateWorkerThreads state),
-          latestEvaluationInfo = []
+      PE.EvaluationContext
+        { PE.nodesParsed = 0,
+          PE.finished = False,
+          PE.evaluation = PE.PositionEval 0,
+          PE.moves = [],
+          PE.showDebug = (engineStateShowDebug state),
+          PE.workerThreadCount = (engineStateWorkerThreads state),
+          PE.latestEvaluationInfo = [],
+          PE.chessCache = chessCache state
         }
 
   -- worker thread doing calculation
   workerThreadId' <- forkIO $ do
     let board' = fromJust $ board state
-    result <- evaluate evalResultRef board' depth'
+    result <- PE.evaluate evalResultRef board' depth'
     showBestMoveAndClear stateRef result
 
   -- killer thread killing on deadline
@@ -168,7 +181,7 @@ doHandleCommand (Go props) stateRef now = do
   writeIORef stateRef newState
   where
     showBestMoveAndClear stateRef result = do
-      let EvaluationContext {moves = moves, latestEvaluationInfo = latestEvaluationInfo} = result
+      let PE.EvaluationContext { PE.moves = moves, PE.latestEvaluationInfo = latestEvaluationInfo} = result
       liftIO $ forM_ latestEvaluationInfo putStrLn
       case moves of
         [] -> return ()

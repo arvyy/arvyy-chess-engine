@@ -24,6 +24,7 @@ import Data.Bits
 import Data.Foldable (foldl')
 import Data.Int (Int64)
 import Data.Word
+import qualified Data.Vector.Unboxed.Mutable as VU
 
 newtype PositionEval = PositionEval Int
   deriving (Eq, Show, Ord)
@@ -40,11 +41,19 @@ negateEval (PositionEval v) = PositionEval (-v)
 evalAdd :: PositionEval -> Int -> PositionEval
 evalAdd (PositionEval v) added = (PositionEval $ v + added)
 
-data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq)
+data TableValueBound = Exact | UpperBound | LowerBound deriving (Show, Eq, Enum)
 
-data TranspositionValue = TranspositionValue TableValueBound PositionEval Int [Move] deriving (Show)
+data TranspositionValue = TranspositionValue TableValueBound PositionEval Int Move deriving (Show)
+type BoxedTranspositionValue = (Int, Int, Int, Int64)
 
-type TranspositionTable = Array.IOArray Word64 (Bool, Word64, TranspositionValue)
+transpositionValueToBoxed :: TranspositionValue -> BoxedTranspositionValue
+transpositionValueToBoxed (TranspositionValue bound (PositionEval v) depth m) = (fromEnum bound, v, depth, moveToInt m)
+
+transpositionValueFromBoxed :: BoxedTranspositionValue -> TranspositionValue
+transpositionValueFromBoxed (bound, v, depth, m) = TranspositionValue (toEnum bound) (PositionEval v) depth (moveFromInt m)
+
+--type TranspositionTable = Array.IOArray Word64 (Bool, Word64, TranspositionValue)
+type TranspositionTable = VU.IOVector (Bool, Word64, BoxedTranspositionValue)
 
 type PawnTable = Array.IOArray Int64 (Bool, Int64, Int)
 
@@ -52,11 +61,20 @@ type KillerMoveTable = Array.IOArray (Int, Int) [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
+{-
 putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> IO ()
 putValue (ChessCache table _ _) board depth value bound move = do
   let key = (zebraHash board) `mod` ttSize
   Array.writeArray table key (True, (zebraHash board), (TranspositionValue bound value depth move))
+-}
+putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> Move -> IO ()
+putValue (ChessCache table _ _) board depth value bound move = do
+  let key = fromIntegral $ (zebraHash board) `mod` ttSize
+  VU.write table key (True, (zebraHash board), transpositionValueToBoxed (TranspositionValue bound value depth move))
+  -- Array.writeArray table key (True, (zebraHash board), (TranspositionValue bound value depth move))
 
+
+{-
 getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
 getValue (ChessCache table _ _) board = do
   let key = (zebraHash board) `mod` ttSize
@@ -64,6 +82,15 @@ getValue (ChessCache table _ _) board = do
   return $
     if present && hash == (zebraHash board)
       then Just value
+      else Nothing
+-}
+getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
+getValue (ChessCache table _ _) board = do
+  let key = fromIntegral $ (zebraHash board) `mod` ttSize
+  (present, hash, boxedValue) <- VU.read table key
+  return $
+    if present && hash == (zebraHash board)
+      then Just $ transpositionValueFromBoxed boxedValue
       else Nothing
 
 -- maps a bitboard representation
@@ -102,7 +129,8 @@ getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex =
 
 create :: IO ChessCache
 create = do
-  table <- Array.newArray (0, ttSize) (False, 0, (TranspositionValue UpperBound (PositionEval 0) 0 [undefined]))
+  --table <- Array.newArray (0, ttSize) (False, 0, (TranspositionValue UpperBound (PositionEval 0) 0 [undefined]))
+  table <- VU.replicate (fromIntegral ttSize) (False, 0, transpositionValueToBoxed (TranspositionValue UpperBound (PositionEval 0) 0 (moveFromInt 0)))
   pawns' <- Array.newArray (0, pawnTableSize) (False, 0, 0)
   killerMoves <- Array.newArray ((0, 0), (30, 8)) []
   return (ChessCache table pawns' killerMoves)

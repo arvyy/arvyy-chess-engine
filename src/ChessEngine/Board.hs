@@ -9,6 +9,8 @@ module ChessEngine.Board
     otherPlayer,
     ChessPiece (..),
     Move,
+    moveToInt,
+    moveFromInt,
     createMove,
     fromCol,
     fromRow,
@@ -314,6 +316,9 @@ getCaptureInfo (Move bitRepr) =
 {-# INLINE moveToTuple #-}
 moveToTuple :: Move -> (Int, Int, Int, Int, PromoChessPieceType, Maybe (ChessPieceType, ChessPieceType))
 moveToTuple move = (fromCol move, fromRow move, toCol move, toRow move, promotion move, getCaptureInfo move)
+
+moveToInt (Move i) = i
+moveFromInt i = Move i
 
 {-# INLINE boardPositions #-}
 boardPositions :: ChessBoard -> [(Int, Int, ChessPiece)]
