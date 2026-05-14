@@ -34,7 +34,7 @@ module ChessEngine.Board
     quickMaterialCount,
     quickPawnCount,
     insufficientMaterial,
-    is3foldRepetition,
+    is2foldRepetition,
     initialBoard,
     applyNullMove,
     applyMove,
@@ -580,8 +580,8 @@ applyMoveUnsafe board move =
        in setPosition hash'' p2 x' y' newMovedPiece
 
 -- return if given board is in 3fold repetition state
-is3foldRepetition :: ChessBoard -> Bool
-is3foldRepetition board = repetitionCount >= 2
+is2foldRepetition :: ChessBoard -> Bool
+is2foldRepetition board = repetitionCount >= 1
   where
     isSamePos board1 board2 =
         (pieces board1 == pieces board2)

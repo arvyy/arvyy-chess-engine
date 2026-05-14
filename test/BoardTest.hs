@@ -104,10 +104,10 @@ unitTests =
         parseUCICommand "go depth 6" @?= Just (Go emptyGoProps {depth = Just 6}),
       testCase "3fold detection" $
         let Just (Position board1) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6 a3b1 a6b8"
-            Just (Position board2) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6"
+            Just (Position board2) = parseUCICommand "position startpos moves b1a3 b8a6"
          in do
-              is3foldRepetition board1 @?= True
-              is3foldRepetition board2 @?= False,
+              is2foldRepetition board1 @?= True
+              is2foldRepetition board2 @?= False,
       testCase "prev not held after irreversible move" $
         let Just (Position (ChessBoard {prev})) = parseUCICommand "position startpos moves b1a3 b8a6 a3b1 a6b8 b1a3 b8a6 e2e4"
          in (isJust prev) @?= False,

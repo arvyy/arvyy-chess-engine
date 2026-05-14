@@ -80,11 +80,15 @@ type App = ReaderT (IORef EvaluationContext) IO
 
 evaluate' :: ChessCache -> EvaluateParams -> App (BestMove, Int)
 evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDepth, rootBoostCandidateIndex, nodesParsed, alpha, beta, ply} =
-  if ((is3foldRepetition board || insufficientMaterial board) && ply > 0)
+  if ((is2foldRepetition board || insufficientMaterial board) && ply > 0)
     then return ((PositionEval 0, []), 0)
     else do
       let depth = max depth' 0
-      tableHit <- liftIO $ getValue cache board
+      tableHit <- 
+        -- TODO better way to check if we're inside PV line
+        if not $ isNullWindow alpha beta
+        then return Nothing
+        else liftIO $ getValue cache board
       let doSearch = do
             sortedCandidates <- liftIO $ sortCandidates cache board ply threadIndex (pseudoLegalCandidateMoves board)
             let wasInCheck = playerInCheck board
