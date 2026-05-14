@@ -28,6 +28,7 @@ import Data.List (intercalate, partition, sortBy)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import Data.Maybe (isJust, isNothing, mapMaybe, fromJust, fromMaybe)
 import Debug.Trace (trace)
+import Data.Ord
 
 type BestMove = (PositionEval, [Move])
 
@@ -96,7 +97,7 @@ evaluate' cache params@EvaluateParams {board, threadIndex, depth = depth', maxDe
             when (bound == LowerBound) $
               liftIO $
                 case moves' of
-                  move : _ -> unless (isJust $ getCaptureInfo move) $ putKillerMove cache (ply, threadIndex) move
+                  move : _ -> unless (isJust $ getCaptureInfo move) $ putHistoryHeuristicMove cache depth (turn board) move
                   _ -> return ()
             case moves' of
                 m : _ ->  liftIO $ putValue cache board depth eval' bound m
@@ -121,8 +122,8 @@ sortCandidates cache board ply threadIndex candidates =
   do
     (goodMovesFromCache, otherMoves) <- partitionAndSortCacheMoves candidates
     let (goodCaptureMoves, badCaptureMoves, otherMoves') = partitionAndSortCaptureMoves board otherMoves
-    (killerMoves, otherMoves'') <- partitionKillerMoves otherMoves'
-    return $ goodMovesFromCache ++ goodCaptureMoves ++ killerMoves ++ badCaptureMoves ++ otherMoves''
+    (historyMoves, otherMoves'') <- partitionHistoryMoves otherMoves'
+    return $ goodMovesFromCache ++ goodCaptureMoves ++ historyMoves ++ badCaptureMoves ++ otherMoves''
   where
     partitionAndSortCacheMoves :: [Move] -> IO ([Move], [Move])
     partitionAndSortCacheMoves moves = do
@@ -131,10 +132,18 @@ sortCandidates cache board ply threadIndex candidates =
         Just (TranspositionValue _ _ _ move) -> partition (\m -> move == m) moves
         _ -> ([], moves)
 
-    partitionKillerMoves :: [Move] -> IO ([Move], [Move])
-    partitionKillerMoves moves = do
-      killers <- getKillerMoves cache (ply, threadIndex)
-      return $ partition (\m -> elem m killers) moves
+    partitionHistoryMoves :: [Move] -> IO ([Move], [Move])
+    partitionHistoryMoves moves = do
+      movesWithHistVal <- sequence $
+        map (\m -> do 
+                val <- getHistoryHeuristicMoveValue cache player m
+                return (m, val)) 
+            moves
+      let sortedMovesWithVal = sortBy (\(_, v1) (_, v2) -> compare (Down v1) (Down v2)) movesWithHistVal
+      let (good, bad) = partition (\(_, v) -> v > 0) sortedMovesWithVal
+      return (fst <$> good, fst <$> bad)
+      
+    player = turn board
 
 partitionAndSortCaptureMoves ::  ChessBoard ->  [Move] -> ([Move], [Move], [Move])
 partitionAndSortCaptureMoves board moves =

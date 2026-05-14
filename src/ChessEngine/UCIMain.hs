@@ -133,6 +133,7 @@ doHandleCommand (Go props) stateRef now = do
           else explicitDeadline <|> implicitDeadline
   evalResultRef <- do
     state <- readIORef stateRef
+    cache <- ED.resetBetweenSearch $ chessCache state
     newIORef
       PE.EvaluationContext
         { PE.nodesParsed = 0,
@@ -142,7 +143,7 @@ doHandleCommand (Go props) stateRef now = do
           PE.showDebug = (engineStateShowDebug state),
           PE.workerThreadCount = (engineStateWorkerThreads state),
           PE.latestEvaluationInfo = [],
-          PE.chessCache = chessCache state
+          PE.chessCache = cache
         }
 
   -- worker thread doing calculation

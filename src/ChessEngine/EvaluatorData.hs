@@ -12,9 +12,10 @@ module ChessEngine.EvaluatorData
     getValue,
     putPawnEvaluation,
     getPawnEvaluation,
-    putKillerMove,
-    getKillerMoves,
+    putHistoryHeuristicMove,
+    getHistoryHeuristicMoveValue,
     create,
+    resetBetweenSearch
   )
 where
 
@@ -56,9 +57,9 @@ type TranspositionTable = VU.IOVector (Bool, Word64, BoxedTranspositionValue)
 
 type PawnTable = Array.IOArray Int64 (Bool, Int64, Int)
 
-type KillerMoveTable = Array.IOArray (Int, Int) [Move]
+type HistoryHeuristicTable = Array.IOArray (Int, Int, Int, Int, Int) Int
 
-data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
+data ChessCache = ChessCache TranspositionTable PawnTable HistoryHeuristicTable
 
 putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> Move -> IO ()
 putValue (ChessCache table _ _) board depth value bound move = do
@@ -97,20 +98,33 @@ getPawnEvaluation (ChessCache _ pawns' _) pawnBitboard = do
       then Just value
       else Nothing
 
-putKillerMove :: ChessCache -> (Int, Int) -> Move -> IO ()
-putKillerMove (ChessCache _ _ killerMoves) plyAndThreadIndex move =
-  do
-    existing' <- Array.readArray killerMoves plyAndThreadIndex
-    let new = take 2 (move : existing')
-    Array.writeArray killerMoves plyAndThreadIndex new
 
-getKillerMoves :: ChessCache -> (Int, Int) -> IO [Move]
-getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex =
-  Array.readArray killerMoves plyAndThreadIndex
+historyHeuristicTableKey :: PlayerColor -> Move -> (Int, Int, Int, Int, Int)
+historyHeuristicTableKey player move = 
+    (fromCol move, fromRow move, toCol move, toRow move, if player == White then 1 else 0)
+      
+putHistoryHeuristicMove :: ChessCache -> Int -> PlayerColor -> Move -> IO ()
+putHistoryHeuristicMove (ChessCache _ _ history) depth player move =
+    do
+        let key = historyHeuristicTableKey player move
+        existing <- Array.readArray history key
+        let new = existing + depth * depth
+        Array.writeArray history key new
+
+getHistoryHeuristicMoveValue :: ChessCache -> PlayerColor -> Move -> IO Int
+getHistoryHeuristicMoveValue (ChessCache _ _ history) player move =
+    do
+        let key = historyHeuristicTableKey player move
+        Array.readArray history key
 
 create :: IO ChessCache
 create = do
   table <- VU.replicate (fromIntegral ttSize) (False, 0, transpositionValueToBoxed (TranspositionValue UpperBound (PositionEval 0) 0 (moveFromInt 0)))
   pawns' <- Array.newArray (0, pawnTableSize) (False, 0, 0)
-  killerMoves <- Array.newArray ((0, 0), (30, 8)) []
-  return (ChessCache table pawns' killerMoves)
+  history <- Array.newArray ((1, 1, 1, 1, 0), (8, 8, 8, 8, 1)) 0
+  return (ChessCache table pawns' history)
+
+resetBetweenSearch :: ChessCache -> IO ChessCache
+resetBetweenSearch (ChessCache tt pawns _) = do
+    history <- Array.newArray ((1, 1, 1, 1, 0), (8, 8, 8, 8, 1)) 0
+    return $ ChessCache tt pawns history
