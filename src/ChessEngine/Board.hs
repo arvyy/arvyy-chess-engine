@@ -317,7 +317,10 @@ getCaptureInfo (Move bitRepr) =
 moveToTuple :: Move -> (Int, Int, Int, Int, PromoChessPieceType, Maybe (ChessPieceType, ChessPieceType))
 moveToTuple move = (fromCol move, fromRow move, toCol move, toRow move, promotion move, getCaptureInfo move)
 
+moveToInt :: Move -> Int64
 moveToInt (Move i) = i
+
+moveFromInt :: Int64 -> Move
 moveFromInt i = Move i
 
 {-# INLINE boardPositions #-}

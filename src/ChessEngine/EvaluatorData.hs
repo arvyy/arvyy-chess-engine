@@ -52,7 +52,6 @@ transpositionValueToBoxed (TranspositionValue bound (PositionEval v) depth m) = 
 transpositionValueFromBoxed :: BoxedTranspositionValue -> TranspositionValue
 transpositionValueFromBoxed (bound, v, depth, m) = TranspositionValue (toEnum bound) (PositionEval v) depth (moveFromInt m)
 
---type TranspositionTable = Array.IOArray Word64 (Bool, Word64, TranspositionValue)
 type TranspositionTable = VU.IOVector (Bool, Word64, BoxedTranspositionValue)
 
 type PawnTable = Array.IOArray Int64 (Bool, Int64, Int)
@@ -61,29 +60,11 @@ type KillerMoveTable = Array.IOArray (Int, Int) [Move]
 
 data ChessCache = ChessCache (TranspositionTable) (PawnTable) (KillerMoveTable)
 
-{-
-putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> [Move] -> IO ()
-putValue (ChessCache table _ _) board depth value bound move = do
-  let key = (zebraHash board) `mod` ttSize
-  Array.writeArray table key (True, (zebraHash board), (TranspositionValue bound value depth move))
--}
 putValue :: ChessCache -> ChessBoard -> Int -> PositionEval -> TableValueBound -> Move -> IO ()
 putValue (ChessCache table _ _) board depth value bound move = do
   let key = fromIntegral $ (zebraHash board) `mod` ttSize
   VU.write table key (True, (zebraHash board), transpositionValueToBoxed (TranspositionValue bound value depth move))
-  -- Array.writeArray table key (True, (zebraHash board), (TranspositionValue bound value depth move))
 
-
-{-
-getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
-getValue (ChessCache table _ _) board = do
-  let key = (zebraHash board) `mod` ttSize
-  (present, hash, value@(TranspositionValue _ _ _ _)) <- Array.readArray table key
-  return $
-    if present && hash == (zebraHash board)
-      then Just value
-      else Nothing
--}
 getValue :: ChessCache -> ChessBoard -> IO (Maybe TranspositionValue)
 getValue (ChessCache table _ _) board = do
   let key = fromIntegral $ (zebraHash board) `mod` ttSize
@@ -129,7 +110,6 @@ getKillerMoves (ChessCache _ _ killerMoves) plyAndThreadIndex =
 
 create :: IO ChessCache
 create = do
-  --table <- Array.newArray (0, ttSize) (False, 0, (TranspositionValue UpperBound (PositionEval 0) 0 [undefined]))
   table <- VU.replicate (fromIntegral ttSize) (False, 0, transpositionValueToBoxed (TranspositionValue UpperBound (PositionEval 0) 0 (moveFromInt 0)))
   pawns' <- Array.newArray (0, pawnTableSize) (False, 0, 0)
   killerMoves <- Array.newArray ((0, 0), (30, 8)) []
